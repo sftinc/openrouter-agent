@@ -106,10 +106,14 @@ interface ToolDeps {
     messages: Message[],
     options?: { llm?: LLMConfig; tools?: unknown[] }
   ) => Promise<{ content: string | null; usage: Usage; tool_calls?: ToolCall[] }>;
+  emit?: (event: AgentEvent) => void;
+  signal?: AbortSignal;
+  runId?: string;
+  parentRunId?: string;
 }
 ```
 
-Future additions (`signal`, `runId`, `emit`) are additive.
+The optional fields are always populated by the agent loop when it invokes a tool. User tools can ignore them; `Agent` (used as a subagent) uses `emit` and `runId` to bubble its own events up into the parent's event stream with `parentRunId` set.
 
 ### `EventDisplay`
 
@@ -439,7 +443,7 @@ export { OpenRouterError } from "./openrouter";
 
 **Parallel tool calls within a turn.** The loop currently dispatches tool calls sequentially. `Promise.all` with per-call error isolation is a drop-in change.
 
-**Expanded `ToolDeps`.** Add `signal: AbortSignal`, `runId: string`, and `emit: (event) => void` when a real use case arrives. Additive; existing tools keep working.
+**Required `ToolDeps` fields.** `emit`, `signal`, `runId`, `parentRunId` are currently optional because user tools don't need them. If they become load-bearing enough that tools should always assume they're present, tighten the types to required. Additive either way.
 
 **Typed per-tool-class pre-builts.** If users end up writing the same server-tool wrappers repeatedly, a companion package (`sft-agent-tools`?) could ship typed ones (`WebSearchTool`, etc.). Kept out of the core library to keep the surface small.
 
