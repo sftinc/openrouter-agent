@@ -43,9 +43,9 @@ function addToolCard(toolName, title, content) {
   return card;
 }
 
-function finishToolCard(card, title, content, isError) {
+function finishToolCard(card, title, content, hasError) {
   card.classList.add("done");
-  if (isError) card.classList.add("error");
+  if (hasError) card.classList.add("error");
   const titleEl = card.querySelector(".tool-title");
   if (titleEl && title) titleEl.textContent = title;
   if (content !== undefined) {
@@ -69,11 +69,6 @@ function scroll() {
 
 function displayOf(event) {
   return event.display ?? null;
-}
-
-function truncate(s, n = 800) {
-  if (typeof s !== "string") s = JSON.stringify(s);
-  return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
 async function send(message) {
@@ -124,7 +119,7 @@ async function send(message) {
         const card = addToolCard(
           event.toolName,
           d?.title ?? `Running ${event.toolName}`,
-          d?.content ?? (event.input ? JSON.stringify(event.input) : undefined)
+          d?.content
         );
         toolCards.set(event.toolUseId, card);
         break;
@@ -133,11 +128,12 @@ async function send(message) {
         const card = toolCards.get(event.toolUseId);
         if (!card) break;
         const d = displayOf(event);
+        const hasError = "error" in event;
         finishToolCard(
           card,
-          d?.title ?? (event.isError ? "Tool failed" : "Completed"),
-          d?.content ?? truncate(event.output),
-          event.isError
+          d?.title ?? (hasError ? "Tool failed" : "Completed"),
+          d?.content,
+          hasError
         );
         break;
       }
