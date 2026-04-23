@@ -7,3 +7,5 @@ export type {
   ErrorResponse,
 } from "./types.js";
 export { DEFAULT_MODEL } from "./types.js";
+export { OpenRouterClient, OpenRouterError } from "./client.js";
+export type { OpenRouterClientOptions } from "./client.js";
