@@ -81,6 +81,10 @@ export class OpenRouterClient {
 
     if (!response.ok) {
       const body = await this.safeParseJson(response);
+      if (process.env.OPENROUTER_DEBUG) {
+        // eslint-disable-next-line no-console
+        console.log("[openrouter] error response:", response.status, JSON.stringify(body));
+      }
       const message =
         (body as { error?: { message?: string } } | undefined)?.error
           ?.message ?? `HTTP ${response.status}`;
@@ -94,7 +98,19 @@ export class OpenRouterClient {
       });
     }
 
-    return (await response.json()) as CompletionsResponse;
+    const json = (await response.json()) as CompletionsResponse;
+    if (process.env.OPENROUTER_DEBUG) {
+      const hasToolCalls = (json.choices ?? []).some(
+        (c) => Array.isArray(c.message?.tool_calls) && c.message.tool_calls.length > 0
+      );
+      const body = JSON.stringify(json, (key, value) => {
+        if (key === "reasoning" || key === "reasoning_details") return undefined;
+        return value;
+      });
+      // eslint-disable-next-line no-console
+      console.log("[openrouter] response:", hasToolCalls ? `\x1b[33m${body}\x1b[0m` : body);
+    }
+    return json;
   }
 
   private async safeParseJson(response: Response): Promise<unknown> {

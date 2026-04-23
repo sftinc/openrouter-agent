@@ -4,11 +4,22 @@ import type { OpenRouterTool } from "../openrouter/index.js";
 import type { ToolDeps } from "./types.js";
 import type { EventDisplay } from "../agent/events.js";
 
+/**
+ * A hook's return value is merged with the display-level `title` default. If
+ * the hook omits `title`, the default is used. If neither supplies a title,
+ * no display is emitted for that phase.
+ */
 export interface ToolDisplayHooks<Args> {
-  start?: (args: Args) => EventDisplay;
-  progress?: (args: Args, meta: { elapsedMs: number }) => EventDisplay;
-  success?: (args: Args, output: unknown) => EventDisplay;
-  error?: (args: Args, error: unknown) => EventDisplay;
+  /**
+   * Default title for every phase (start/progress/success/error). Per-phase
+   * hooks can override it by returning their own `title`. A string is used as
+   * the title verbatim; a function receives the validated tool args.
+   */
+  title?: string | ((args: Args) => string);
+  start?: (args: Args) => Partial<EventDisplay>;
+  progress?: (args: Args, meta: { elapsedMs: number }) => Partial<EventDisplay>;
+  success?: (args: Args, output: unknown) => Partial<EventDisplay>;
+  error?: (args: Args, error: unknown) => Partial<EventDisplay>;
 }
 
 export interface ToolConfig<Args> {

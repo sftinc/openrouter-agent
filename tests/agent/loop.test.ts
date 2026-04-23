@@ -115,6 +115,49 @@ describe("runLoop", () => {
     }
   });
 
+  test("tool receives a snapshot of loop messages via deps.getMessages", async () => {
+    const seen: any[] = [];
+    const tool = new Tool({
+      name: "peek",
+      description: "peek at messages",
+      inputSchema: z.object({}),
+      execute: async (_args, deps) => {
+        seen.push(deps.getMessages?.());
+        return "ok";
+      },
+    });
+    const client = {
+      complete: vi.fn()
+        .mockResolvedValueOnce(
+          mockResponse({
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              tool_calls: [
+                { id: "c1", type: "function", function: { name: "peek", arguments: "{}" } },
+              ],
+            },
+          })
+        )
+        .mockResolvedValueOnce(mockResponse({ message: { content: "done" } })),
+    };
+    const cfg = mkConfig({ tools: [tool], client: client as any });
+
+    await runLoop(cfg, "hello there", {}, () => {});
+
+    expect(seen).toHaveLength(1);
+    const snap = seen[0] as any[];
+    expect(snap.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(snap.some((m) => m.role === "system")).toBe(false);
+    expect(snap[0].content).toBe("hello there");
+    expect(snap[1].tool_calls?.[0].function.name).toBe("peek");
+
+    // Mutating the snapshot must not affect the loop.
+    snap.push({ role: "user", content: "MUTATION" });
+    const second = client.complete.mock.calls[1][0];
+    expect((second.messages as any[]).some((m) => m.content === "MUTATION")).toBe(false);
+  });
+
   test("tool handler throws surface as error on tool:end and loop continues", async () => {
     const events: AgentEvent[] = [];
     const tool = new Tool({
@@ -300,5 +343,172 @@ describe("runLoop", () => {
     expect(types[0]).toBe("agent:start");
     expect(types).toContain("message");
     expect(types[types.length - 1]).toBe("agent:end");
+  });
+
+  test("session is NOT persisted when the run errors", async () => {
+    const store = new InMemorySessionStore();
+    const before = [
+      { role: "user", content: "earlier" } as const,
+      { role: "assistant", content: "earlier reply" } as const,
+    ];
+    await store.set("s1", [...before]);
+    const client = {
+      complete: vi.fn().mockRejectedValue(
+        Object.assign(new Error("boom"), { code: 500 })
+      ),
+    };
+    const cfg = mkConfig({ sessionStore: store, client: client as any });
+
+    await runLoop(cfg, "followup", { sessionId: "s1" }, collect([]));
+
+    const persisted = await store.get("s1");
+    expect(persisted).toEqual(before);
+  });
+
+  describe("tool display merging", () => {
+    async function runOnce(
+      tool: Tool<{ text: string }>,
+      args: { text: string } = { text: "hi" }
+    ): Promise<AgentEvent[]> {
+      const events: AgentEvent[] = [];
+      const client = {
+        complete: vi.fn()
+          .mockResolvedValueOnce(
+            mockResponse({
+              finish_reason: "tool_calls",
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "c1",
+                    type: "function",
+                    function: { name: tool.name, arguments: JSON.stringify(args) },
+                  },
+                ],
+              },
+            })
+          )
+          .mockResolvedValueOnce(mockResponse({ id: "gen-2", message: { content: "final" } })),
+      };
+      const cfg = mkConfig({ tools: [tool], client: client as any });
+      await runLoop(cfg, "go", {}, collect(events));
+      return events;
+    }
+
+    test("default title (string) is used when phase hook omits title", async () => {
+      const tool = new Tool({
+        name: "echo",
+        description: "",
+        inputSchema: z.object({ text: z.string() }),
+        execute: async (a) => `ECHO:${a.text}`,
+        display: {
+          title: "Echoing",
+          success: (_a, output) => ({ content: output }),
+        },
+      });
+      const events = await runOnce(tool);
+      const start = events.find((e) => e.type === "tool:start");
+      const end = events.find((e) => e.type === "tool:end");
+      expect(start?.display).toEqual({ title: "Echoing", content: undefined });
+      expect(end?.display).toEqual({ title: "Echoing", content: "ECHO:hi" });
+    });
+
+    test("default title (function) receives args", async () => {
+      const tool = new Tool({
+        name: "echo",
+        description: "",
+        inputSchema: z.object({ text: z.string() }),
+        execute: async (a) => `ECHO:${a.text}`,
+        display: {
+          title: (a) => `Echoing ${a.text}`,
+        },
+      });
+      const events = await runOnce(tool, { text: "abc" });
+      const start = events.find((e) => e.type === "tool:start");
+      const end = events.find((e) => e.type === "tool:end");
+      expect(start?.display?.title).toBe("Echoing abc");
+      expect(end?.display?.title).toBe("Echoing abc");
+    });
+
+    test("phase hook title overrides the default", async () => {
+      const tool = new Tool({
+        name: "echo",
+        description: "",
+        inputSchema: z.object({ text: z.string() }),
+        execute: async (a) => `ECHO:${a.text}`,
+        display: {
+          title: "Running",
+          success: (_a, output) => ({ title: "Done", content: output }),
+        },
+      });
+      const events = await runOnce(tool);
+      const end = events.find((e) => e.type === "tool:end");
+      expect(end?.display).toEqual({ title: "Done", content: "ECHO:hi" });
+    });
+
+    test("no title anywhere emits no display", async () => {
+      const tool = new Tool({
+        name: "echo",
+        description: "",
+        inputSchema: z.object({ text: z.string() }),
+        execute: async (a) => `ECHO:${a.text}`,
+        display: {
+          success: (_a, output) => ({ content: output }),
+        },
+      });
+      const events = await runOnce(tool);
+      const start = events.find((e) => e.type === "tool:start");
+      const end = events.find((e) => e.type === "tool:end");
+      expect(start?.display).toBeUndefined();
+      expect(end?.display).toBeUndefined();
+    });
+
+    test("error hook inherits default title when it returns only content", async () => {
+      const tool = new Tool({
+        name: "crash",
+        description: "",
+        inputSchema: z.object({ text: z.string() }),
+        execute: async () => { throw new Error("boom"); },
+        display: {
+          title: "Crashing",
+          error: (_a, err) => ({ content: String(err) }),
+        },
+      });
+      const events = await runOnce(tool);
+      const end = events.find((e) => e.type === "tool:end");
+      expect(end?.display?.title).toBe("Crashing");
+      if (end?.type === "tool:end" && "error" in end) {
+        expect(end.display?.content).toContain("boom");
+      } else {
+        throw new Error("expected tool:end with error");
+      }
+    });
+  });
+
+  test("session is NOT persisted when the run is aborted mid-flight", async () => {
+    const store = new InMemorySessionStore();
+    const before = [
+      { role: "user", content: "earlier" } as const,
+      { role: "assistant", content: "earlier reply" } as const,
+    ];
+    await store.set("s1", [...before]);
+    const ctrl = new AbortController();
+    const client = {
+      complete: vi.fn().mockImplementation(async () => {
+        ctrl.abort();
+        throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      }),
+    };
+    const cfg = mkConfig({ sessionStore: store, client: client as any });
+
+    const events: AgentEvent[] = [];
+    await runLoop(cfg, "followup", { sessionId: "s1", signal: ctrl.signal }, collect(events));
+
+    const persisted = await store.get("s1");
+    expect(persisted).toEqual(before);
+    const end = events.find((e) => e.type === "agent:end");
+    if (end?.type === "agent:end") {
+      expect(end.result.stopReason).toBe("aborted");
+    }
   });
 });

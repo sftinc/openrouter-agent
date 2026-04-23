@@ -5,7 +5,7 @@ import { OpenRouterClient } from "../openrouter/index.js";
 import { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
-import { InMemorySessionStore } from "../session/index.js";
+import { InMemorySessionStore, SessionBusyError } from "../session/index.js";
 import type { AgentEvent, EventDisplay } from "./events.js";
 import { runLoop, type RunLoopConfig, type RunLoopOptions } from "./loop.js";
 
@@ -41,6 +41,7 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
   private readonly sessionStore: SessionStore;
   private readonly client: OpenRouterClient;
   private readonly agentDisplay?: AgentConfig<Input>["display"];
+  private readonly activeSessions = new Set<string>();
 
   constructor(config: AgentConfig<Input>) {
     const inputSchema =
@@ -92,58 +93,79 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
   }
 
   async run(input: string | Message[], options: AgentRunOptions = {}): Promise<Result> {
-    const events: AgentEvent[] = [];
-    let outerRunId: string | undefined;
-    await runLoop(this.buildConfig(options.parentRunId), input, options, (ev) => {
-      events.push(ev);
-      if (ev.type === "agent:start" && outerRunId === undefined) {
-        outerRunId = ev.runId;
+    const release = this.acquireSession(options.sessionId);
+    try {
+      const events: AgentEvent[] = [];
+      let outerRunId: string | undefined;
+      await runLoop(this.buildConfig(options.parentRunId), input, options, (ev) => {
+        events.push(ev);
+        if (ev.type === "agent:start" && outerRunId === undefined) {
+          outerRunId = ev.runId;
+        }
+      });
+      const end = events.find(
+        (e) => e.type === "agent:end" && e.runId === outerRunId
+      );
+      if (end?.type !== "agent:end") {
+        throw new Error("runLoop finished without agent:end event");
       }
-    });
-    const end = events.find(
-      (e) => e.type === "agent:end" && e.runId === outerRunId
-    );
-    if (end?.type !== "agent:end") {
-      throw new Error("runLoop finished without agent:end event");
+      return end.result;
+    } finally {
+      release();
     }
-    return end.result;
   }
 
   async *runStream(
     input: string | Message[],
     options: AgentRunOptions = {}
   ): AsyncIterable<AgentEvent> {
-    const queue: AgentEvent[] = [];
-    let resolveNext: (() => void) | null = null;
-    let done = false;
+    const release = this.acquireSession(options.sessionId);
+    try {
+      const queue: AgentEvent[] = [];
+      let resolveNext: (() => void) | null = null;
+      let done = false;
 
-    const emit = (ev: AgentEvent) => {
-      queue.push(ev);
-      const r = resolveNext;
-      resolveNext = null;
-      r?.();
-    };
-
-    const loopPromise = runLoop(this.buildConfig(options.parentRunId), input, options, emit)
-      .finally(() => {
-        done = true;
+      const emit = (ev: AgentEvent) => {
+        queue.push(ev);
         const r = resolveNext;
         resolveNext = null;
         r?.();
-      });
+      };
 
-    while (true) {
-      if (queue.length > 0) {
-        yield queue.shift()!;
-        continue;
+      const loopPromise = runLoop(this.buildConfig(options.parentRunId), input, options, emit)
+        .finally(() => {
+          done = true;
+          const r = resolveNext;
+          resolveNext = null;
+          r?.();
+        });
+
+      while (true) {
+        if (queue.length > 0) {
+          yield queue.shift()!;
+          continue;
+        }
+        if (done) break;
+        await new Promise<void>((resolve) => {
+          resolveNext = resolve;
+        });
       }
-      if (done) break;
-      await new Promise<void>((resolve) => {
-        resolveNext = resolve;
-      });
-    }
 
-    await loopPromise;
+      await loopPromise;
+    } finally {
+      release();
+    }
+  }
+
+  private acquireSession(sessionId: string | undefined): () => void {
+    if (!sessionId) return () => {};
+    if (this.activeSessions.has(sessionId)) {
+      throw new SessionBusyError(sessionId);
+    }
+    this.activeSessions.add(sessionId);
+    return () => {
+      this.activeSessions.delete(sessionId);
+    };
   }
 
   private buildConfig(parentRunId?: string): RunLoopConfig {

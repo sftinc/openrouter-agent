@@ -23,6 +23,14 @@ function addUserMessage(text) {
   scroll();
 }
 
+function renderMarkdown(el, text) {
+  if (window.marked && window.DOMPurify) {
+    el.innerHTML = window.DOMPurify.sanitize(window.marked.parse(text));
+  } else {
+    el.textContent = text;
+  }
+}
+
 function addAssistantMessage() {
   const div = el("div", "msg assistant", "");
   messagesEl.appendChild(div);
@@ -58,8 +66,17 @@ function finishToolCard(card, title, content, hasError) {
   }
 }
 
-function addError(msg) {
-  messagesEl.appendChild(el("div", "msg error", "Error: " + msg));
+function addErrorWithRetry(msg, onRetry) {
+  const wrap = el("div", "msg error");
+  wrap.appendChild(document.createTextNode("Error: " + msg + " "));
+  const btn = el("button", "retry-btn", "Retry");
+  btn.type = "button";
+  btn.addEventListener("click", () => {
+    btn.disabled = true;
+    onRetry();
+  });
+  wrap.appendChild(btn);
+  messagesEl.appendChild(wrap);
   scroll();
 }
 
@@ -71,13 +88,20 @@ function displayOf(event) {
   return event.display ?? null;
 }
 
-async function send(message) {
-  addUserMessage(message);
-  input.value = "";
+// Performs the fetch + stream loop for a given user message. Does not render
+// the user bubble — callers do that once, and retries reuse the original one.
+async function runRequest(message) {
   sendBtn.disabled = true;
 
-  const toolCards = new Map(); // toolUseId -> element
+  const toolCards = new Map();
   let assistantEl = null;
+  let errorShown = false;
+
+  const showError = (msg) => {
+    if (errorShown) return;
+    errorShown = true;
+    addErrorWithRetry(msg, () => runRequest(message));
+  };
 
   try {
     const response = await fetch("/api/chat", {
@@ -85,8 +109,13 @@ async function send(message) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, sessionId }),
     });
+
+    if (response.status === 409) {
+      showError("another request is in progress for this session");
+      return;
+    }
     if (!response.ok || !response.body) {
-      addError(`HTTP ${response.status}`);
+      showError(`HTTP ${response.status}`);
       return;
     }
 
@@ -106,7 +135,7 @@ async function send(message) {
     }
     if (buffer.trim()) handleEvent(JSON.parse(buffer));
   } catch (err) {
-    addError(err.message ?? String(err));
+    showError(err.message ?? String(err));
   } finally {
     sendBtn.disabled = false;
     input.focus();
@@ -144,28 +173,29 @@ async function send(message) {
           event.message.content.length > 0
         ) {
           if (!assistantEl) assistantEl = addAssistantMessage();
-          assistantEl.textContent = event.message.content;
+          renderMarkdown(assistantEl, event.message.content);
           scroll();
         }
         break;
       }
       case "agent:end": {
         if (event.result?.stopReason === "error" && event.result?.error?.message) {
-          addError(event.result.error.message);
-        }
-        if (
+          showError(event.result.error.message);
+        } else if (event.result?.stopReason === "aborted") {
+          showError("request was aborted before it finished");
+        } else if (
           !assistantEl &&
           typeof event.result?.text === "string" &&
           event.result.text.length > 0
         ) {
           assistantEl = addAssistantMessage();
-          assistantEl.textContent = event.result.text;
+          renderMarkdown(assistantEl, event.result.text);
           scroll();
         }
         break;
       }
       case "error": {
-        addError(event.error?.message ?? "unknown error");
+        showError(event.error?.message ?? "unknown error");
         break;
       }
       // agent:start, tool:progress ignored in this demo
@@ -175,8 +205,15 @@ async function send(message) {
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
+  if (sendBtn.disabled) return;
   const msg = input.value.trim();
-  if (msg) send(msg);
+  if (!msg) return;
+  // Disable synchronously before any async work starts so a double-click or
+  // Enter-mash can't submit twice.
+  sendBtn.disabled = true;
+  input.value = "";
+  addUserMessage(msg);
+  runRequest(msg);
 });
 
 input.focus();

@@ -123,12 +123,35 @@ function safeDisplay<T>(fn: () => T): T | undefined {
   }
 }
 
+/**
+ * Merge a tool phase hook's partial display with the display-level `title`
+ * default. Returns a fully-resolved `EventDisplay` with a string title, or
+ * undefined if no title can be produced. All hook calls are wrapped in a
+ * try/catch so a throwing display hook can't take down the run.
+ */
+function resolveToolDisplay<Args>(
+  tool: Tool<Args> | undefined,
+  args: Args,
+  pickHook: (d: NonNullable<Tool<Args>["display"]>) => Partial<import("./events.js").EventDisplay> | undefined
+): import("./events.js").EventDisplay | undefined {
+  if (!tool?.display) return undefined;
+  return safeDisplay(() => {
+    const d = tool.display!;
+    const defaultTitle =
+      typeof d.title === "function" ? d.title(args) : d.title;
+    const partial = pickHook(d);
+    const title = partial?.title ?? defaultTitle;
+    if (typeof title !== "string") return undefined;
+    return { title, content: partial?.content };
+  });
+}
+
 function resolveInitialMessages(
   input: string | Message[],
   systemOverride: string | undefined,
   systemFromConfig: string | undefined,
   sessionMessages: Message[] | null
-): Message[] {
+): { system: string | undefined; messages: Message[] } {
   const messages: Message[] = [];
 
   let systemContent: string | undefined;
@@ -140,9 +163,6 @@ function resolveInitialMessages(
     else systemContent = systemFromConfig;
   } else {
     systemContent = systemFromConfig;
-  }
-  if (typeof systemContent === "string") {
-    messages.push({ role: "system", content: systemContent });
   }
 
   if (sessionMessages) {
@@ -160,7 +180,7 @@ function resolveInitialMessages(
     messages.push({ role: "user", content: input });
   }
 
-  return messages;
+  return { system: systemContent, messages };
 }
 
 function lastAssistantText(messages: Message[]): string {
@@ -201,12 +221,17 @@ export async function runLoop(
     options.sessionId && config.sessionStore
       ? await config.sessionStore.get(options.sessionId)
       : null;
-  let messages = resolveInitialMessages(
+  const { system: systemContent, messages } = resolveInitialMessages(
     input,
     options.system,
     config.systemPrompt,
     sessionMessages
   );
+
+  const wireMessages = (): Message[] =>
+    typeof systemContent === "string"
+      ? [{ role: "system", content: systemContent }, ...messages]
+      : messages;
 
   const toolByName = new Map<string, Tool>();
   for (const t of config.tools) toolByName.set(t.name, t);
@@ -240,6 +265,7 @@ export async function runLoop(
     signal,
     runId,
     parentRunId,
+    getMessages: () => messages.slice(),
   };
 
   for (let turn = 0; turn < maxTurns; turn++) {
@@ -251,10 +277,14 @@ export async function runLoop(
     let response: CompletionsResponse;
     try {
       response = await config.client.complete(
-        { ...llm, messages, tools: openrouterTools },
+        { ...llm, messages: wireMessages(), tools: openrouterTools },
         signal
       );
     } catch (err) {
+      if (signal?.aborted) {
+        stopReason = "aborted";
+        break;
+      }
       stopReason = "error";
       const anyErr = err as { code?: number; message?: string; metadata?: Record<string, unknown> };
       error = {
@@ -321,7 +351,7 @@ export async function runLoop(
         toolUseId,
         toolName,
         input: parsedArgs,
-        display: tool ? safeDisplay(() => tool.display?.start?.(parsedArgs)) : undefined,
+        display: resolveToolDisplay(tool, parsedArgs, (d) => d.start?.(parsedArgs)),
       });
 
       let result: ToolResult;
@@ -337,6 +367,17 @@ export async function runLoop(
         }
       }
 
+      if (process.env.OPENROUTER_DEBUG) {
+        const payload =
+          "error" in result
+            ? { error: result.error, metadata: result.metadata }
+            : { content: result.content, metadata: result.metadata };
+        // eslint-disable-next-line no-console
+        console.log(
+          `[tool] ${toolName} result: \x1b[32m${JSON.stringify(payload)}\x1b[0m`
+        );
+      }
+
       if ("error" in result) {
         const err = result.error;
         emit({
@@ -345,9 +386,7 @@ export async function runLoop(
           toolUseId,
           error: err,
           metadata: result.metadata,
-          display: tool
-            ? safeDisplay(() => tool.display?.error?.(parsedArgs as never, err))
-            : undefined,
+          display: resolveToolDisplay(tool, parsedArgs, (d) => d.error?.(parsedArgs, err)),
         });
         messages.push({
           role: "tool",
@@ -362,9 +401,7 @@ export async function runLoop(
           toolUseId,
           output: out,
           metadata: result.metadata,
-          display: tool
-            ? safeDisplay(() => tool.display?.success?.(parsedArgs as never, out))
-            : undefined,
+          display: resolveToolDisplay(tool, parsedArgs, (d) => d.success?.(parsedArgs, out)),
         });
         messages.push({
           role: "tool",
@@ -379,9 +416,16 @@ export async function runLoop(
 
   if (stopReason === null) stopReason = "max_turns";
 
-  if (options.sessionId && config.sessionStore) {
-    const toStore = messages.filter((m) => m.role !== "system");
-    await config.sessionStore.set(options.sessionId, toStore);
+  // Transactional persist: only write back to the session on a clean terminal
+  // stop reason. On "error" or "aborted" the session stays exactly as it was
+  // before this run so the client can safely retry with the same user message.
+  const persistable =
+    stopReason === "done" ||
+    stopReason === "max_turns" ||
+    stopReason === "length" ||
+    stopReason === "content_filter";
+  if (persistable && options.sessionId && config.sessionStore) {
+    await config.sessionStore.set(options.sessionId, messages);
   }
 
   const result: Result = {

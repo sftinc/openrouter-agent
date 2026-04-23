@@ -4,6 +4,7 @@ export { Tool } from "./tool/index.js";
 export type { ToolConfig, ToolDisplayHooks, ToolDeps, ToolResult } from "./tool/index.js";
 export {
   InMemorySessionStore,
+  SessionBusyError,
 } from "./session/index.js";
 export type { SessionStore } from "./session/index.js";
 export { defaultDisplay } from "./agent/index.js";

@@ -32,4 +32,13 @@ export interface ToolDeps {
   signal?: AbortSignal;
   runId?: string;
   parentRunId?: string;
+  /**
+   * Snapshot of the loop's in-memory messages at the moment of the call:
+   * prior session history, the user input, and every assistant/tool message
+   * produced earlier in this run — including the assistant message whose
+   * tool_call invoked this tool. The system prompt is never included; it is
+   * only injected at the OpenRouter wire boundary. Returns a fresh array each
+   * call; mutating it does not affect the loop.
+   */
+  getMessages?: () => Message[];
 }
