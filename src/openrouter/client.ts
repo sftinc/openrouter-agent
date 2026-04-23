@@ -43,10 +43,12 @@ export class OpenRouterClient {
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: OpenRouterClientOptions) {
-    const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
+    const envKey =
+      typeof process !== "undefined" ? process.env?.OPENROUTER_API_KEY : undefined;
+    const apiKey = options.apiKey ?? envKey;
     if (!apiKey) {
       throw new Error(
-        "OPENROUTER_API_KEY is not set. Pass apiKey to the Agent constructor or set the env var."
+        "OPENROUTER_API_KEY is not set. Pass apiKey to the OpenRouterClient or set the env var."
       );
     }
     this.apiKey = apiKey;
