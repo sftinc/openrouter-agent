@@ -1,0 +1,171 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-alt: #1f232c;
+  --border: #2a2f3a;
+  --text: #e7e9ee;
+  --muted: #8b93a7;
+  --accent: #6aa6ff;
+  --user: #2d3448;
+  --tool: #2a3c2a;
+  --tool-err: #4a2a2a;
+  --error: #d66;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+body {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 16px;
+  gap: 12px;
+  height: 100vh;
+}
+
+header h1 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.subtitle code {
+  background: var(--panel-alt);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+main {
+  overflow: hidden;
+}
+
+#messages {
+  height: 100%;
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.msg {
+  padding: 10px 12px;
+  border-radius: 8px;
+  max-width: 85%;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.msg.user {
+  align-self: flex-end;
+  background: var(--user);
+}
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+}
+.msg.error {
+  align-self: flex-start;
+  background: #3a1c1c;
+  border: 1px solid var(--error);
+  color: #ffc9c9;
+}
+
+.tool {
+  align-self: flex-start;
+  background: var(--tool);
+  border: 1px solid #3a5c3a;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  max-width: 85%;
+}
+.tool.error {
+  background: var(--tool-err);
+  border-color: #6a3a3a;
+}
+.tool .tool-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tool .tool-title::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7dd17d;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.tool.done .tool-title::before {
+  animation: none;
+  background: #7dd17d;
+}
+.tool.error .tool-title::before {
+  animation: none;
+  background: var(--error);
+}
+.tool .tool-content {
+  margin-top: 4px;
+  color: var(--muted);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+#composer {
+  display: flex;
+  gap: 8px;
+}
+#input {
+  flex: 1;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+}
+#input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+#send {
+  padding: 10px 18px;
+  background: var(--accent);
+  color: #0b1020;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
