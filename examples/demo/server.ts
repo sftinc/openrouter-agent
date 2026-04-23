@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -142,10 +142,7 @@ const server = createServer(async (req, res) => {
   res.end("Method not allowed");
 });
 
-async function handleChat(
-  req: Parameters<Parameters<typeof createServer>[0]>[0],
-  res: Parameters<Parameters<typeof createServer>[0]>[1]
-): Promise<void> {
+async function handleChat(req: IncomingMessage, res: ServerResponse): Promise<void> {
   let raw = "";
   for await (const chunk of req) raw += chunk;
   let body: { message?: string; sessionId?: string };
@@ -187,10 +184,7 @@ async function handleChat(
   }
 }
 
-async function serveStatic(
-  pathname: string,
-  res: Parameters<Parameters<typeof createServer>[0]>[1]
-): Promise<void> {
+async function serveStatic(pathname: string, res: ServerResponse): Promise<void> {
   const relative = pathname === "/" ? "/index.html" : pathname;
   const filePath = join(PUBLIC_DIR, relative);
 

@@ -14,7 +14,7 @@ export interface AgentConfig<Input> {
   description: string;
   llm?: LLMConfig;
   systemPrompt?: string;
-  tools?: Tool[];
+  tools?: Tool<any>[];
   inputSchema?: z.ZodType<Input>;
   maxTurns?: number;
   sessionStore?: SessionStore;
@@ -36,7 +36,7 @@ const DEFAULT_INPUT_SCHEMA = z.object({ input: z.string() });
 export class Agent<Input = { input: string }> extends Tool<Input> {
   private readonly llm: LLMConfig;
   private readonly systemPrompt?: string;
-  private readonly agentTools: Tool[];
+  private readonly agentTools: Tool<any>[];
   private readonly maxTurns: number;
   private readonly sessionStore: SessionStore;
   private readonly client: OpenRouterClient;

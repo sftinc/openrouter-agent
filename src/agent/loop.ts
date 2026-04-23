@@ -14,7 +14,7 @@ export interface RunLoopConfig {
   agentName: string;
   systemPrompt?: string;
   llm: LLMConfig;
-  tools: Tool[];
+  tools: Tool<any>[];
   maxTurns: number;
   sessionStore?: SessionStore;
   client: {
