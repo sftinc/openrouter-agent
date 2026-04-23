@@ -45,7 +45,15 @@ export type AgentEvent =
       runId: string;
       toolUseId: string;
       output: unknown;
-      isError: boolean;
+      metadata?: Record<string, unknown>;
+      display?: EventDisplay;
+    }
+  | {
+      type: "tool:end";
+      runId: string;
+      toolUseId: string;
+      error: string;
+      metadata?: Record<string, unknown>;
       display?: EventDisplay;
     }
   | {
@@ -72,7 +80,7 @@ export function defaultDisplay(event: AgentEvent): EventDisplay {
     case "tool:progress":
       return { title: `Still running (${Math.round(event.elapsedMs / 1000)}s)` };
     case "tool:end":
-      return { title: event.isError ? "Tool failed" : "Completed tool" };
+      return { title: "error" in event ? "Tool failed" : "Completed tool" };
     case "error":
       return { title: "Error", content: event.error.message };
   }

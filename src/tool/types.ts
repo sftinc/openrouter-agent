@@ -3,16 +3,19 @@ import type { LLMConfig, OpenRouterTool } from "../openrouter/index.js";
 import type { AgentEvent } from "../agent/events.js";
 
 /**
- * Normalized tool result. A string return from a tool handler is sugar for
- * `{ content: string }`. `content` is what the model sees (serialized to
- * string before sending if not already a string). `isError` and `metadata`
- * are for events, UI, and logs — never sent to the model.
+ * Normalized tool result. Tools may return any value: a bare string, number,
+ * object, or array becomes the success payload. To signal failure, either
+ * throw (the loop catches) or return `{ error: "message" }`. `metadata` is
+ * optional and never sent to the model — it's for events, UI, and logs.
+ *
+ * A string return from a tool handler is sugar for `{ content: string }`.
+ * A non-string return that isn't already a ToolResult is wrapped as
+ * `{ content: value }`. Non-string `content` is JSON-stringified before
+ * being sent to the model.
  */
-export interface ToolResult {
-  content: unknown;
-  isError?: boolean;
-  metadata?: Record<string, unknown>;
-}
+export type ToolResult =
+  | { content: unknown; metadata?: Record<string, unknown> }
+  | { error: string; metadata?: Record<string, unknown> };
 
 /**
  * Dependencies injected into every tool's execute() call. Optional fields are

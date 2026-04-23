@@ -102,7 +102,7 @@ describe("end-to-end", () => {
     expect(toolStart).toBeDefined();
     expect(toolEnd).toBeDefined();
     if (toolEnd?.type === "tool:end") {
-      expect(toolEnd.isError).toBe(false);
+      expect("error" in toolEnd).toBe(false);
     }
 
     // Second HTTP call should include the tool result fed back to the model.

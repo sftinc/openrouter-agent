@@ -58,11 +58,11 @@ describe("Tool", () => {
       execute: async (args) => args.text,
       display: {
         start: (args) => ({ title: `Echoing ${args.text}` }),
-        end: (args, output) => ({ title: `Echoed`, content: output }),
+        success: (args, output) => ({ title: `Echoed`, content: output }),
       },
     });
     expect(tool.display?.start?.({ text: "hi" })).toEqual({ title: "Echoing hi" });
-    expect(tool.display?.end?.({ text: "hi" }, "hi", { isError: false })).toEqual({
+    expect(tool.display?.success?.({ text: "hi" }, "hi")).toEqual({
       title: "Echoed",
       content: "hi",
     });

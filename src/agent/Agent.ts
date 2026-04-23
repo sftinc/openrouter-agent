@@ -69,7 +69,10 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
         );
         const end = events.find((e) => e.type === "agent:end");
         if (end?.type !== "agent:end") {
-          return { content: "", isError: true };
+          return { error: "subagent finished without agent:end event" };
+        }
+        if (end.result.stopReason === "error") {
+          return { error: end.result.error?.message ?? "subagent errored" };
         }
         return { content: end.result.text };
       },

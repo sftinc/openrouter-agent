@@ -94,8 +94,21 @@ function mergeServerToolUse(
   return out as Usage["server_tool_use"];
 }
 
-function normalizeToolResult(raw: string | ToolResult): ToolResult {
-  return typeof raw === "string" ? { content: raw } : raw;
+function normalizeToolResult(raw: unknown): ToolResult {
+  if (typeof raw === "string") return { content: raw };
+  if (raw !== null && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if ("error" in obj && typeof obj.error === "string") {
+      return { error: obj.error, metadata: obj.metadata as Record<string, unknown> | undefined };
+    }
+    if ("content" in obj) {
+      return {
+        content: obj.content,
+        metadata: obj.metadata as Record<string, unknown> | undefined,
+      };
+    }
+  }
+  return { content: raw };
 }
 
 function wireContent(content: unknown): string {
@@ -313,43 +326,52 @@ export async function runLoop(
 
       let result: ToolResult;
       if (!tool) {
-        result = {
-          content: `Error: tool "${toolName}" is not registered with this agent`,
-          isError: true,
-        };
+        result = { error: `tool "${toolName}" is not registered with this agent` };
       } else {
         try {
           const validated = tool.inputSchema.parse(parsedArgs);
           const raw = await tool.execute(validated, deps);
           result = normalizeToolResult(raw);
         } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          result = { content: `Error: ${msg}`, isError: true };
+          result = { error: e instanceof Error ? e.message : String(e) };
         }
       }
 
-      emit({
-        type: "tool:end",
-        runId,
-        toolUseId,
-        output: result.content,
-        isError: !!result.isError,
-        display: tool
-          ? safeDisplay(() =>
-              tool.display?.end?.(
-                parsedArgs as never,
-                result.content,
-                { isError: !!result.isError }
-              )
-            )
-          : undefined,
-      });
-
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: wireContent(result.content),
-      });
+      if ("error" in result) {
+        const err = result.error;
+        emit({
+          type: "tool:end",
+          runId,
+          toolUseId,
+          error: err,
+          metadata: result.metadata,
+          display: tool
+            ? safeDisplay(() => tool.display?.error?.(parsedArgs as never, err))
+            : undefined,
+        });
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: `Error: ${err}`,
+        });
+      } else {
+        const out = result.content;
+        emit({
+          type: "tool:end",
+          runId,
+          toolUseId,
+          output: out,
+          metadata: result.metadata,
+          display: tool
+            ? safeDisplay(() => tool.display?.success?.(parsedArgs as never, out))
+            : undefined,
+        });
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: wireContent(out),
+        });
+      }
     }
 
     // Loop continues for next turn.

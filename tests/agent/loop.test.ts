@@ -110,12 +110,12 @@ describe("runLoop", () => {
     expect(toolStart).toBeDefined();
     expect(toolEnd).toBeDefined();
     if (toolEnd?.type === "tool:end") {
-      expect(toolEnd.isError).toBe(false);
-      expect(toolEnd.output).toBe("ECHO:hi");
+      expect("error" in toolEnd).toBe(false);
+      if (!("error" in toolEnd)) expect(toolEnd.output).toBe("ECHO:hi");
     }
   });
 
-  test("tool handler errors feed 'Error: ...' to model with isError=true and loop continues", async () => {
+  test("tool handler throws surface as error on tool:end and loop continues", async () => {
     const events: AgentEvent[] = [];
     const tool = new Tool({
       name: "crash",
@@ -145,9 +145,10 @@ describe("runLoop", () => {
     await runLoop(cfg, "go", {}, collect(events));
 
     const toolEnd = events.find((e) => e.type === "tool:end");
-    if (toolEnd?.type === "tool:end") {
-      expect(toolEnd.isError).toBe(true);
-      expect(String(toolEnd.output)).toContain("boom");
+    if (toolEnd?.type === "tool:end" && "error" in toolEnd) {
+      expect(toolEnd.error).toContain("boom");
+    } else {
+      throw new Error("expected tool:end with error");
     }
     const secondCall = client.complete.mock.calls[1][0];
     const toolMsg = (secondCall.messages as any[]).find((m) => m.role === "tool");

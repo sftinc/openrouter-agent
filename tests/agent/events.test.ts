@@ -28,10 +28,14 @@ describe("defaultDisplay", () => {
       runId: "r1",
       toolUseId: "t1",
       output: "result",
-      isError: false,
     };
     expect(defaultDisplay(ok).title).toBe("Completed tool");
-    const err: AgentEvent = { ...ok, isError: true };
+    const err: AgentEvent = {
+      type: "tool:end",
+      runId: "r1",
+      toolUseId: "t1",
+      error: "something broke",
+    };
     expect(defaultDisplay(err).title).toBe("Tool failed");
   });
 
