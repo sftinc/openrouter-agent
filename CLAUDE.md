@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Node.js + TypeScript. An agent wrapper around OpenRouter. API reference lives in `docs/openrouter/` — treat it as the source of truth when writing integration code.
 
+## Commands
+
+- `npm install` — install dependencies
+- `npm run typecheck` — run TypeScript in no-emit mode
+- `npm test` — run the Vitest suite once
+- `npm run test:watch` — watch mode
+- `npm run build` — emit `dist/`
+
+Run a single test file: `npm test -- tests/agent/loop.test.ts`
+Run a single test by name: `npm test -- -t "handles tool errors"`
+
 ## Code organization
 
 - Organize code into subfolders by concern (e.g. `src/client/`, `src/agent/`, `src/tools/`).
