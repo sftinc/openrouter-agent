@@ -116,7 +116,7 @@ function resolveInitialMessages(
   systemFromConfig: string | undefined,
   sessionMessages: Message[] | null
 ): Message[] {
-  const messages: Message[] = sessionMessages ? [...sessionMessages] : [];
+  const messages: Message[] = [];
 
   let systemContent: string | undefined;
   if (systemOverride !== undefined) {
@@ -124,17 +124,18 @@ function resolveInitialMessages(
   } else if (Array.isArray(input)) {
     const sys = input.find((m) => m.role === "system");
     if (sys && typeof sys.content === "string") systemContent = sys.content;
-  } else if (messages.length === 0) {
+    else systemContent = systemFromConfig;
+  } else {
     systemContent = systemFromConfig;
   }
+  if (typeof systemContent === "string") {
+    messages.push({ role: "system", content: systemContent });
+  }
 
-  if (systemContent !== undefined) {
-    const existing = messages.findIndex((m) => m.role === "system");
-    const sysMsg: Message = { role: "system", content: systemContent };
-    if (existing >= 0) messages[existing] = sysMsg;
-    else messages.unshift(sysMsg);
-  } else if (messages.length === 0 && systemFromConfig) {
-    messages.unshift({ role: "system", content: systemFromConfig });
+  if (sessionMessages) {
+    for (const m of sessionMessages) {
+      if (m.role !== "system") messages.push(m);
+    }
   }
 
   if (Array.isArray(input)) {
@@ -357,7 +358,8 @@ export async function runLoop(
   if (stopReason === null) stopReason = "max_turns";
 
   if (options.sessionId && config.sessionStore) {
-    await config.sessionStore.set(options.sessionId, messages);
+    const toStore = messages.filter((m) => m.role !== "system");
+    await config.sessionStore.set(options.sessionId, toStore);
   }
 
   const result: Result = {

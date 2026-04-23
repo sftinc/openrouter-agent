@@ -219,10 +219,9 @@ describe("runLoop", () => {
     expect(client.complete).toHaveBeenCalledTimes(1);
   });
 
-  test("sessionId seeds history and persists updated history on exit", async () => {
+  test("sessionId seeds history and persists updated history on exit (no system in store)", async () => {
     const store = new InMemorySessionStore();
     await store.set("s1", [
-      { role: "system", content: "be nice" },
       { role: "user", content: "earlier" },
       { role: "assistant", content: "earlier reply" },
     ]);
@@ -234,24 +233,45 @@ describe("runLoop", () => {
     const persisted = await store.get("s1");
     expect(persisted).not.toBeNull();
     const roles = persisted!.map((m) => m.role);
-    expect(roles).toEqual(["system", "user", "assistant", "user", "assistant"]);
+    expect(roles).toEqual(["user", "assistant", "user", "assistant"]);
   });
 
-  test("run-time system replaces session's system message", async () => {
+  test("stored system messages are stripped on load (defensive)", async () => {
     const store = new InMemorySessionStore();
-    await store.set("s1", [{ role: "system", content: "old" }]);
-    const events: AgentEvent[] = [];
+    await store.set("s1", [
+      { role: "system", content: "stale" },
+      { role: "user", content: "earlier" },
+      { role: "assistant", content: "earlier reply" },
+    ]);
     const client = { complete: vi.fn().mockResolvedValue(mockResponse({ message: { content: "ok" } })) };
     const cfg = mkConfig({ sessionStore: store, client: client as any });
 
-    await runLoop(cfg, "hi", { sessionId: "s1", system: "new prompt" }, collect(events));
+    await runLoop(cfg, "followup", { sessionId: "s1" }, collect([]));
+
+    const [req] = client.complete.mock.calls[0];
+    const systems = (req.messages as any[]).filter((m) => m.role === "system");
+    expect(systems).toHaveLength(1);
+    expect(systems[0].content).toBe("you are helpful");
+  });
+
+  test("run-time system is sent on the wire but NOT persisted", async () => {
+    const store = new InMemorySessionStore();
+    await store.set("s1", [
+      { role: "user", content: "prev" },
+      { role: "assistant", content: "prev reply" },
+    ]);
+    const client = { complete: vi.fn().mockResolvedValue(mockResponse({ message: { content: "ok" } })) };
+    const cfg = mkConfig({ sessionStore: store, client: client as any });
+
+    await runLoop(cfg, "hi", { sessionId: "s1", system: "new prompt" }, collect([]));
 
     const [req] = client.complete.mock.calls[0];
     const sys = (req.messages as any[]).find((m) => m.role === "system");
     expect(sys.content).toBe("new prompt");
+
     const persisted = await store.get("s1");
     const sysStored = persisted!.find((m) => m.role === "system");
-    expect(sysStored?.content).toBe("new prompt");
+    expect(sysStored).toBeUndefined();
   });
 
   test("infrastructure error from client aborts with stopReason=error", async () => {
