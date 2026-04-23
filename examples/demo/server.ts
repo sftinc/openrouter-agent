@@ -33,10 +33,11 @@ const calculator = new Tool({
     }
   },
   display: {
-    start: (args) => ({ title: `Calculating`, content: args.expression }),
+    start: (args) => ({ title: `Calculator: ${args.expression}` }),
     end: (args, output, meta) => ({
-      title: meta.isError ? `Calculator failed` : `= ${output}`,
-      content: args.expression,
+      title: meta.isError
+        ? `Calculator failed: ${args.expression}`
+        : `Calculator: ${args.expression} = ${output}`,
     }),
   },
 });
@@ -84,11 +85,11 @@ const webSearch = new Tool({
         {
           role: "system",
           content:
-            "You are a web research assistant. Use the web to find current, factual information and return a concise answer with the key facts and any source URLs.",
+            "You are a web research assistant. Use the openrouter:web_search tool to find current, factual information and return a concise answer with the key facts and any source URLs.",
         },
         { role: "user", content: query },
       ],
-      { llm: { plugins: [{ id: "web" }] } }
+      { tools: [{ type: "openrouter:web_search" } as never] }
     );
     return res.content ?? "(no results)";
   },
