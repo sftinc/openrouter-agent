@@ -104,27 +104,42 @@ Injected into every tool's `execute`:
 interface ToolDeps {
   complete: (
     messages: Message[],
-    options?: { model?: string; tools?: unknown[]; temperature?: number; response_format?: unknown }
+    options?: { llm?: LLMConfig; tools?: unknown[] }
   ) => Promise<{ content: string | null; usage: Usage; tool_calls?: ToolCall[] }>;
 }
 ```
 
 Future additions (`signal`, `runId`, `emit`) are additive.
 
+### `EventDisplay`
+
+Every event optionally carries a `display` block for UI consumers. Kept intentionally minimal — `title` is the required human-readable label; `content` is an open `unknown` slot for whatever richer payload the event needs (string, object, array — whatever makes sense for the rendering surface).
+
+```ts
+type EventDisplay = {
+  title: string;
+  content?: unknown;  // string | object | array | anything the UI wants to render
+};
+```
+
 ### `AgentEvent`
 
 ```ts
 type AgentEvent =
-  | { type: "agent:start";    runId: string; parentRunId?: string; agentName: string }
-  | { type: "agent:end";      runId: string; result: Result }
-  | { type: "message";        runId: string; message: Message }
-  | { type: "tool:start";     runId: string; toolUseId: string; toolName: string; input: unknown }
-  | { type: "tool:progress";  runId: string; toolUseId: string; elapsedMs: number }
-  | { type: "tool:end";       runId: string; toolUseId: string; output: unknown; isError: boolean }
-  | { type: "error";          runId: string; error: { code?: number; message: string } };
+  | { type: "agent:start";    runId: string; parentRunId?: string; agentName: string; display?: EventDisplay }
+  | { type: "agent:end";      runId: string; result: Result;                          display?: EventDisplay }
+  | { type: "message";        runId: string; message: Message;                        display?: EventDisplay }
+  | { type: "tool:start";     runId: string; toolUseId: string; toolName: string; input: unknown; display?: EventDisplay }
+  | { type: "tool:progress";  runId: string; toolUseId: string; elapsedMs: number;    display?: EventDisplay }
+  | { type: "tool:end";       runId: string; toolUseId: string; output: unknown; isError: boolean; display?: EventDisplay }
+  | { type: "error";          runId: string; error: { code?: number; message: string }; display?: EventDisplay };
 ```
 
 Subagent events bubble up to the parent's stream with `parentRunId` set. Consumers reconstruct a tree by correlating `runId` / `parentRunId`.
+
+**`display` population.** Tools and agents optionally declare `display` hooks on their config (see `Tool` and `Agent` sections below). When the agent emits an event, it calls the relevant hook to populate `event.display`. If no hook is declared, `display` is `undefined` — consumers should fall back to a `defaultDisplay(event)` helper shipped by the library.
+
+Hooks that throw are caught; `display` is left `undefined` and the loop continues. Rendering must never block execution.
 
 ### `Usage`
 
@@ -141,6 +156,47 @@ interface Usage {
   server_tool_use?: { web_search_requests?: number };
 }
 ```
+
+### `LLMConfig`
+
+Mirrors OpenRouter's chat-completion request schema (per `docs/openrouter/llm.md`), minus `messages` and `tools` (those are handled separately — messages by the loop, tools by the Agent's `tools: Tool[]` array). Every field is optional; any subset can be supplied at construction, per-run, or per sub-call.
+
+```ts
+interface LLMConfig {
+  model?: string;                                          // default: "anthropic/claude-haiku-4.5"
+  max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  min_p?: number;
+  top_a?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  repetition_penalty?: number;
+  seed?: number;
+  stop?: string | string[];
+  logit_bias?: Record<number, number>;
+  top_logprobs?: number;
+  response_format?:
+    | { type: "json_object" }
+    | { type: "json_schema"; json_schema: { name: string; strict?: boolean; schema: object } };
+  tool_choice?: "none" | "auto" | { type: "function"; function: { name: string } };
+  prediction?: { type: "content"; content: string };
+  reasoning?: { effort?: "low" | "medium" | "high"; max_tokens?: number; enabled?: boolean };
+  user?: string;
+  models?: string[];                                       // fallback chain
+  route?: "fallback";
+  provider?: Record<string, unknown>;                      // ProviderPreferences (typed later)
+  plugins?: Array<{ id: string; [key: string]: unknown }>;
+}
+```
+
+**Resolution across layers.** A shallow merge, top to bottom:
+
+1. Library defaults (`model: "anthropic/claude-haiku-4.5"`, everything else unset).
+2. `Agent` constructor `llm` field.
+3. Per-run `options.llm` passed to `run()` / `runStream()`.
+4. For sub-calls from inside a tool, the `llm` passed to `deps.complete(messages, { llm })` — does **not** inherit from the parent run; the tool specifies what it wants explicitly.
 
 ### `Result`
 
@@ -170,6 +226,11 @@ class Tool<Args = any> {
     description: string;
     inputSchema: z.ZodSchema<Args>;
     execute: (args: Args, deps: ToolDeps) => Promise<string | ToolResult>;
+    display?: {
+      start?:    (args: Args) => EventDisplay;
+      progress?: (args: Args, meta: { elapsedMs: number }) => EventDisplay;
+      end?:      (args: Args, output: unknown, meta: { isError: boolean }) => EventDisplay;
+    };
   });
 
   name: string;
@@ -191,7 +252,7 @@ class Agent<Input = string> extends Tool<Input> {
   constructor(config: {
     name: string;
     description: string;
-    model: string;                                         // e.g. "anthropic/claude-haiku-4.5"
+    llm?: LLMConfig;                                       // defaults: { model: "anthropic/claude-haiku-4.5" }
     systemPrompt?: string;                                 // default; overridable per-run
     tools?: Tool[];                                        // includes other Agents
     inputSchema?: z.ZodSchema<Input>;                      // defaults to z.object({ input: z.string() })
@@ -200,6 +261,10 @@ class Agent<Input = string> extends Tool<Input> {
     apiKey?: string;                                       // defaults to process.env.OPENROUTER_API_KEY
     referer?: string;                                      // HTTP-Referer header
     title?: string;                                        // X-OpenRouter-Title header
+    display?: {
+      start?: (input: string | Message[]) => EventDisplay;
+      end?:   (result: Result)            => EventDisplay;
+    };
   });
 
   run(
@@ -209,6 +274,7 @@ class Agent<Input = string> extends Tool<Input> {
       system?: string;                                     // overrides constructor + any system message in `input`
       signal?: AbortSignal;
       maxTurns?: number;                                   // overrides constructor default
+      llm?: LLMConfig;                                     // shallow-merges over Agent's llm defaults
       parentRunId?: string;                                // set automatically when invoked as a subagent
     }
   ): Promise<Result>;
@@ -255,7 +321,7 @@ generationIds = []
 for turn in 1..maxTurns:
   if signal.aborted: stopReason = "aborted"; break
 
-  response = openrouter.complete({ model, messages, tools: tools.map(toOpenRouterTool()) })
+  response = openrouter.complete({ ...resolvedLlm, messages, tools: tools.map(toOpenRouterTool()) })
   generationIds.push(response.id)
   usage = accumulate(usage, response.usage)
 
@@ -353,8 +419,10 @@ export { Tool } from "./tool";
 export { InMemorySessionStore, type SessionStore } from "./session";
 export type { Message, ContentPart, ToolCall } from "./types";
 export type { ToolDeps, ToolResult } from "./tool";
-export type { AgentEvent } from "./agent";
+export type { AgentEvent, EventDisplay } from "./agent";
+export { defaultDisplay } from "./agent";
 export type { Result, Usage } from "./types";
+export type { LLMConfig } from "./openrouter";
 export { OpenRouterError } from "./openrouter";
 ```
 
