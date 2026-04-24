@@ -512,3 +512,59 @@ describe("runLoop", () => {
     }
   });
 });
+
+describe("Usage accumulation — multimodal & cost", () => {
+  test("sums audio_tokens and video_tokens across turns", async () => {
+    const openrouter = {
+      complete: vi
+        .fn()
+        .mockResolvedValueOnce(
+          mockResponse({
+            id: "gen-a",
+            message: { content: null, tool_calls: [
+              { id: "c1", type: "function", function: { name: "noop", arguments: "{}" } },
+            ] },
+            finish_reason: "tool_calls",
+            usage: {
+              prompt_tokens: 10, completion_tokens: 5, total_tokens: 15,
+              prompt_tokens_details: { audio_tokens: 2, video_tokens: 1 },
+              completion_tokens_details: { audio_tokens: 3, image_tokens: 4 },
+              cost_details: { upstream_inference_prompt_cost: 0.01, upstream_inference_completions_cost: 0.02 },
+              is_byok: false,
+            } as any,
+          })
+        )
+        .mockResolvedValueOnce(
+          mockResponse({
+            id: "gen-b",
+            message: { content: "done" },
+            usage: {
+              prompt_tokens: 8, completion_tokens: 4, total_tokens: 12,
+              prompt_tokens_details: { audio_tokens: 5 },
+              cost_details: { upstream_inference_prompt_cost: 0.03, upstream_inference_completions_cost: 0.01 },
+              is_byok: true,
+            } as any,
+          })
+        ),
+    };
+    const noop = new Tool({
+      name: "noop",
+      description: "no-op",
+      inputSchema: z.object({}),
+      execute: async () => "ok",
+    });
+    const events: AgentEvent[] = [];
+    await runLoop(mkConfig({ tools: [noop], openrouter: openrouter as any }), "hi", {}, collect(events));
+
+    const end = events.find((e) => e.type === "agent:end");
+    expect(end?.type).toBe("agent:end");
+    if (end?.type !== "agent:end") throw new Error("unreachable");
+    expect(end.result.usage.prompt_tokens_details?.audio_tokens).toBe(7);
+    expect(end.result.usage.prompt_tokens_details?.video_tokens).toBe(1);
+    expect(end.result.usage.completion_tokens_details?.audio_tokens).toBe(3);
+    expect(end.result.usage.completion_tokens_details?.image_tokens).toBe(4);
+    expect((end.result.usage as any).cost_details?.upstream_inference_prompt_cost).toBeCloseTo(0.04);
+    expect((end.result.usage as any).cost_details?.upstream_inference_completions_cost).toBeCloseTo(0.03);
+    expect((end.result.usage as any).is_byok).toBe(true);
+  });
+});

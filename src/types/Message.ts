@@ -20,23 +20,48 @@ export type ToolCall = {
 
 /**
  * Usage accumulated across all LLM calls in a single agent run.
- * Mirrors OpenRouter's ResponseUsage.
+ * Mirrors OpenRouter's ResponseUsage (see docs/openrouter/llm.md §Usage).
  */
 export interface Usage {
+  /** Total tokens the provider counted as input across all calls. */
   prompt_tokens: number;
+  /** Total tokens the provider counted as output across all calls. */
   completion_tokens: number;
+  /** prompt_tokens + completion_tokens, for convenience. */
   total_tokens: number;
+  /** Optional provider-reported cost in USD. Summed across calls. */
   cost?: number;
+  /** Fine-grained breakdown of prompt tokens. */
   prompt_tokens_details?: {
     cached_tokens?: number;
     cache_write_tokens?: number;
+    audio_tokens?: number;
+    video_tokens?: number;
   };
+  /** Fine-grained breakdown of completion tokens. */
   completion_tokens_details?: {
     reasoning_tokens?: number;
+    audio_tokens?: number;
+    image_tokens?: number;
   };
+  /** OpenRouter server-side tool usage, e.g. web_search_requests. */
   server_tool_use?: {
     web_search_requests?: number;
   };
+  /**
+   * Cost broken down by upstream pricing component. Provider-dependent.
+   * See docs/openrouter/llm.md §Usage.
+   */
+  cost_details?: {
+    upstream_inference_cost?: number;
+    upstream_inference_prompt_cost?: number;
+    upstream_inference_completions_cost?: number;
+  };
+  /**
+   * Whether the call was billed to the user's BYOK provider key. Reflects the
+   * most recent call in this run.
+   */
+  is_byok?: boolean;
 }
 
 /**

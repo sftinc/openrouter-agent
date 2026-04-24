@@ -67,6 +67,8 @@ function addUsage(a: Usage, b: Usage | undefined): Usage {
     prompt_tokens_details: mergeNumericRecords(a.prompt_tokens_details, b.prompt_tokens_details),
     completion_tokens_details: mergeNumericRecords(a.completion_tokens_details, b.completion_tokens_details),
     server_tool_use: mergeNumericRecords(a.server_tool_use, b.server_tool_use),
+    cost_details: mergeNumericRecords(a.cost_details, b.cost_details),
+    is_byok: b.is_byok ?? a.is_byok,
   };
 }
 
