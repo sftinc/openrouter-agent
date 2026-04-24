@@ -8,6 +8,7 @@ import type { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
 import type { AgentEvent, EventEmit } from "./events.js";
+import { generateId } from "../lib/index.js";
 
 export interface RunLoopConfig {
   agentName: string;
@@ -39,11 +40,11 @@ export interface RunLoopOptions {
 }
 
 function newRunId(): string {
-  return `run-${Math.random().toString(36).slice(2, 10)}`;
+  return generateId("run-");
 }
 
 function newToolUseId(fallback: string): string {
-  return fallback || `tu-${Math.random().toString(36).slice(2, 10)}`;
+  return fallback || generateId("tu-");
 }
 
 function zeroUsage(): Usage {
