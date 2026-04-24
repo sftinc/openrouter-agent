@@ -41,8 +41,11 @@ export interface LLMConfig {
 	plugins?: Array<{ id: string; [key: string]: unknown }>
 }
 
-/** Tool declaration as sent to OpenRouter (function tools only). */
-export interface OpenRouterTool {
+/**
+ * Function tool declaration — a client-side tool your agent implements.
+ * See docs/openrouter/llm.md §Tool Calls.
+ */
+export interface FunctionTool {
 	type: 'function'
 	function: {
 		name: string
@@ -50,6 +53,42 @@ export interface OpenRouterTool {
 		parameters: object
 	}
 }
+
+/**
+ * Server-side datetime tool. OpenRouter supplies the current datetime when
+ * invoked; your code does not implement it. See docs/openrouter/tool-datetime.md.
+ */
+export interface DatetimeServerTool {
+	type: 'openrouter:datetime'
+}
+
+/**
+ * Server-side web search tool. Executes a search on the provider's
+ * infrastructure and returns results. See docs/openrouter/tool-web_search.md
+ * for the full `parameters` shape.
+ */
+export interface WebSearchServerTool {
+	type: 'openrouter:web_search'
+	parameters?: {
+		search_context_size?: 'low' | 'medium' | 'high'
+		user_location?: {
+			type: 'approximate'
+			approximate: {
+				country?: string
+				city?: string
+				region?: string
+				timezone?: string
+			}
+		}
+	}
+}
+
+/**
+ * Any tool OpenRouter accepts: either a client-side `function` tool (you
+ * implement `execute`) or an OpenRouter-hosted server tool (datetime, web
+ * search). See docs/openrouter/llm.md and tool-*.md.
+ */
+export type OpenRouterTool = FunctionTool | DatetimeServerTool | WebSearchServerTool
 
 /** Non-streaming choice shape from OpenRouter. */
 export interface NonStreamingChoice {

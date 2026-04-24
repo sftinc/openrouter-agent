@@ -1,6 +1,9 @@
 export type {
   LLMConfig,
   OpenRouterTool,
+  FunctionTool,
+  DatetimeServerTool,
+  WebSearchServerTool,
   CompletionsRequest,
   CompletionsResponse,
   NonStreamingChoice,
