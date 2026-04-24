@@ -119,6 +119,88 @@ function resolveToolDisplay<Args>(
   });
 }
 
+/**
+ * Runs a single tool call from the assistant's response: validates args,
+ * executes the tool, normalizes the result, emits start/end events, and
+ * returns the `role: "tool"` message to append to the conversation.
+ * Extracted from runLoop's main loop so the per-turn flow stays readable.
+ */
+async function executeToolCall(
+  toolCall: { id: string; function: { name: string; arguments: string } },
+  toolByName: Map<string, Tool>,
+  deps: ToolDeps,
+  runId: string,
+  emit: EventEmit
+): Promise<Message> {
+  const toolUseId = newToolUseId(toolCall.id);
+  const toolName = toolCall.function.name;
+  const tool = toolByName.get(toolName);
+
+  let parsedArgs: unknown;
+  try {
+    parsedArgs = JSON.parse(toolCall.function.arguments || "{}");
+  } catch {
+    parsedArgs = {};
+  }
+
+  emit({
+    type: "tool:start",
+    runId,
+    toolUseId,
+    toolName,
+    input: parsedArgs,
+    display: resolveToolDisplay(tool, parsedArgs, (d) => d.start?.(parsedArgs)),
+  });
+
+  let result: ToolResult;
+  if (!tool) {
+    result = { error: `tool "${toolName}" is not registered with this agent` };
+  } else {
+    try {
+      const validated = tool.inputSchema.parse(parsedArgs);
+      const raw = await tool.execute(validated, deps);
+      result = normalizeToolResult(raw);
+    } catch (e) {
+      result = { error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  if (process.env.OPENROUTER_DEBUG) {
+    const payload =
+      "error" in result
+        ? { error: result.error, metadata: result.metadata }
+        : { content: result.content, metadata: result.metadata };
+    // eslint-disable-next-line no-console
+    console.log(
+      `[tool] ${toolName} result: \x1b[32m${JSON.stringify(payload)}\x1b[0m`
+    );
+  }
+
+  if ("error" in result) {
+    const err = result.error;
+    emit({
+      type: "tool:end",
+      runId,
+      toolUseId,
+      error: err,
+      metadata: result.metadata,
+      display: resolveToolDisplay(tool, parsedArgs, (d) => d.error?.(parsedArgs, err)),
+    });
+    return buildToolErrorMessage(toolCall.id, err);
+  }
+
+  const out = result.content;
+  emit({
+    type: "tool:end",
+    runId,
+    toolUseId,
+    output: out,
+    metadata: result.metadata,
+    display: resolveToolDisplay(tool, parsedArgs, (d) => d.success?.(parsedArgs, out)),
+  });
+  return buildToolResultMessage(toolCall.id, out);
+}
+
 function resolveInitialMessages(
   input: string | Message[],
   systemOverride: string | undefined,
@@ -312,73 +394,8 @@ export async function runLoop(
     }
 
     for (const toolCall of choice.message.tool_calls) {
-      const toolUseId = newToolUseId(toolCall.id);
-      const toolName = toolCall.function.name;
-      const tool = toolByName.get(toolName);
-
-      let parsedArgs: unknown;
-      try {
-        parsedArgs = JSON.parse(toolCall.function.arguments || "{}");
-      } catch {
-        parsedArgs = {};
-      }
-
-      emit({
-        type: "tool:start",
-        runId,
-        toolUseId,
-        toolName,
-        input: parsedArgs,
-        display: resolveToolDisplay(tool, parsedArgs, (d) => d.start?.(parsedArgs)),
-      });
-
-      let result: ToolResult;
-      if (!tool) {
-        result = { error: `tool "${toolName}" is not registered with this agent` };
-      } else {
-        try {
-          const validated = tool.inputSchema.parse(parsedArgs);
-          const raw = await tool.execute(validated, deps);
-          result = normalizeToolResult(raw);
-        } catch (e) {
-          result = { error: e instanceof Error ? e.message : String(e) };
-        }
-      }
-
-      if (process.env.OPENROUTER_DEBUG) {
-        const payload =
-          "error" in result
-            ? { error: result.error, metadata: result.metadata }
-            : { content: result.content, metadata: result.metadata };
-        // eslint-disable-next-line no-console
-        console.log(
-          `[tool] ${toolName} result: \x1b[32m${JSON.stringify(payload)}\x1b[0m`
-        );
-      }
-
-      if ("error" in result) {
-        const err = result.error;
-        emit({
-          type: "tool:end",
-          runId,
-          toolUseId,
-          error: err,
-          metadata: result.metadata,
-          display: resolveToolDisplay(tool, parsedArgs, (d) => d.error?.(parsedArgs, err)),
-        });
-        messages.push(buildToolErrorMessage(toolCall.id, err));
-      } else {
-        const out = result.content;
-        emit({
-          type: "tool:end",
-          runId,
-          toolUseId,
-          output: out,
-          metadata: result.metadata,
-          display: resolveToolDisplay(tool, parsedArgs, (d) => d.success?.(parsedArgs, out)),
-        });
-        messages.push(buildToolResultMessage(toolCall.id, out));
-      }
+      const toolMessage = await executeToolCall(toolCall, toolByName, deps, runId, emit);
+      messages.push(toolMessage);
     }
 
     // Loop continues for next turn.
