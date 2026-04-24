@@ -65,11 +65,18 @@ export interface Usage {
 }
 
 /**
- * Result returned by Agent.run().
+ * Result returned by `Agent.run()` (and surfaced via `agent:end` event).
  */
 export interface Result {
+  /**
+   * The final assistant text message after all tool calls in this run.
+   * Empty string if the run produced no assistant text (e.g. `error` before
+   * any turn completed, or the last turn was all tool calls).
+   */
   text: string;
+  /** Full conversation including all tool messages from this run. */
   messages: Message[];
+  /** Why the loop stopped. `done` is the clean path. */
   stopReason:
     | "done"
     | "max_turns"
@@ -77,8 +84,11 @@ export interface Result {
     | "length"
     | "content_filter"
     | "error";
+  /** Accumulated usage across every LLM call in this run. */
   usage: Usage;
+  /** Every `response.id` OpenRouter returned, in order. */
   generationIds: string[];
+  /** Populated iff `stopReason === "error"`. */
   error?: { code?: number; message: string; metadata?: Record<string, unknown> };
 }
 
