@@ -10,6 +10,12 @@ import type { SessionStore } from "../session/index.js";
 import type { AgentEvent, EventEmit } from "./events.js";
 import { generateId, mergeNumericRecords } from "../lib/index.js";
 
+const FINISH_REASON_TO_STOP: Record<string, Result["stopReason"]> = {
+  stop: "done",
+  length: "length",
+  content_filter: "content_filter",
+};
+
 export interface RunLoopConfig {
   agentName: string;
   systemPrompt?: string;
@@ -286,9 +292,11 @@ export async function runLoop(
     emit({ type: "message", runId, message: assistantMsg });
 
     const fr = choice.finish_reason;
-    if (fr === "stop") { stopReason = "done"; break; }
-    if (fr === "length") { stopReason = "length"; break; }
-    if (fr === "content_filter") { stopReason = "content_filter"; break; }
+    const mapped = FINISH_REASON_TO_STOP[fr ?? ""];
+    if (mapped) {
+      stopReason = mapped;
+      break;
+    }
     if (fr === "error") {
       stopReason = "error";
       error = choice.error
