@@ -139,9 +139,12 @@ type AgentEvent =
   | { type: "message";        runId: string; message: Message;                        display?: EventDisplay }
   | { type: "tool:start";     runId: string; toolUseId: string; toolName: string; input: unknown; display?: EventDisplay }
   | { type: "tool:progress";  runId: string; toolUseId: string; elapsedMs: number;    display?: EventDisplay }
-  | { type: "tool:end";       runId: string; toolUseId: string; output: unknown; isError: boolean; display?: EventDisplay }
+  | { type: "tool:end";       runId: string; toolUseId: string; output: unknown; metadata?: Record<string, unknown>; display?: EventDisplay }
+  | { type: "tool:end";       runId: string; toolUseId: string; error: string;   metadata?: Record<string, unknown>; display?: EventDisplay }
   | { type: "error";          runId: string; error: { code?: number; message: string }; display?: EventDisplay };
 ```
+
+**Note (2026-04-23):** The original spec modeled `tool:end` as a single variant with an `isError: boolean` flag. Implementation replaced it with a discriminated union (success carries `output`; failure carries `error`) so TypeScript narrows automatically. `metadata` is forwarded from the tool's `ToolResult`. Behavior is identical.
 
 Subagent events bubble up to the parent's stream with `parentRunId` set. Consumers reconstruct a tree by correlating `runId` / `parentRunId`.
 
@@ -235,9 +238,12 @@ class Tool<Args = any> {
     inputSchema: z.ZodSchema<Args>;
     execute: (args: Args, deps: ToolDeps) => Promise<string | ToolResult>;
     display?: {
-      start?:    (args: Args) => EventDisplay;
-      progress?: (args: Args, meta: { elapsedMs: number }) => EventDisplay;
-      end?:      (args: Args, output: unknown, meta: { isError: boolean }) => EventDisplay;
+      /** Default title applied to every phase; per-phase hooks can override. */
+      title?: string;
+      start?:    (args: Args) => Partial<EventDisplay>;
+      progress?: (args: Args, meta: { elapsedMs: number }) => Partial<EventDisplay>;
+      success?:  (args: Args, output: unknown) => Partial<EventDisplay>;
+      error?:    (args: Args, error: unknown) => Partial<EventDisplay>;
     };
   });
 
@@ -252,6 +258,8 @@ class Tool<Args = any> {
 ```
 
 `toOpenRouterTool` uses `zod-to-json-schema` to convert the Zod schema to JSON Schema for the wire format.
+
+**Note (2026-04-23):** The original spec proposed a single `end?(args, output, { isError })` display hook. Implementation split it into `success?(args, output)` and `error?(args, error)` to align with the discriminated `ToolResult` shape. Hook returns are `Partial<EventDisplay>` — merged with the top-level `title` default.
 
 ## `Agent` class
 
@@ -353,11 +361,15 @@ for turn in 1..maxTurns:
         raw = await tool.execute(args, deps)
         result = normalize(raw)                     // string -> { content: string }
       catch e:
-        result = { content: `Error: ${e.message}`, isError: true }
-      emit { type: "tool:end", runId, toolUseId, output: result.content, isError: !!result.isError }
+        result = { error: e.message }
 
-      wireContent = typeof result.content === "string" ? result.content : JSON.stringify(result.content)
-      messages.push({ role: "tool", tool_call_id: toolCall.id, content: wireContent })
+      if "error" in result:
+        emit { type: "tool:end", runId, toolUseId, error: result.error, metadata: result.metadata }
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: `Error: ${result.error}` })
+      else:
+        emit { type: "tool:end", runId, toolUseId, output: result.content, metadata: result.metadata }
+        wireContent = typeof result.content === "string" ? result.content : JSON.stringify(result.content)
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: wireContent })
 
 if turn == maxTurns && !stopReason: stopReason = "max_turns"
 
