@@ -4,29 +4,85 @@ import { runLoop, type RunLoopConfig } from "../../src/agent/loop.js";
 import type { AgentEvent } from "../../src/agent/events.js";
 import { Tool } from "../../src/tool/Tool.js";
 import { InMemorySessionStore } from "../../src/session/InMemorySessionStore.js";
-import type { CompletionsResponse } from "../../src/openrouter/index.js";
+import type { CompletionChunk } from "../../src/openrouter/index.js";
 import type { ToolCall, Usage } from "../../src/types/index.js";
-import { mockCompletionsResponse } from "../fixtures/completions.js";
 
-function mockResponse(partial: {
+/**
+ * Build a series of CompletionChunks that emit `content` as a single text
+ * delta, optional tool_calls on the last chunk, and usage on a trailing
+ * empty-choices chunk.
+ */
+function mockChunks(partial: {
   id?: string;
-  message: { content: string | null; tool_calls?: unknown[] };
+  content?: string | null;
+  tool_calls?: ToolCall[];
   finish_reason?: string;
-  usage?: unknown;
-}): CompletionsResponse {
-  return mockCompletionsResponse({
-    id: partial.id,
-    content: partial.message.content,
-    tool_calls: partial.message.tool_calls as ToolCall[] | undefined,
-    finish_reason: partial.finish_reason,
-    usage: partial.usage as Usage | undefined,
+  usage?: Usage;
+}): CompletionChunk[] {
+  const id = partial.id ?? "gen-1";
+  const model = "anthropic/claude-haiku-4.5";
+  const chunks: CompletionChunk[] = [];
+  if (partial.content != null && partial.content.length > 0) {
+    chunks.push({
+      id,
+      object: "chat.completion.chunk",
+      created: 1,
+      model,
+      choices: [
+        {
+          finish_reason: null,
+          native_finish_reason: null,
+          delta: { content: partial.content },
+        },
+      ],
+    });
+  }
+  chunks.push({
+    id,
+    object: "chat.completion.chunk",
+    created: 1,
+    model,
+    choices: [
+      {
+        finish_reason: partial.finish_reason ?? "stop",
+        native_finish_reason: partial.finish_reason ?? "stop",
+        delta: {
+          content: null,
+          tool_calls: partial.tool_calls?.map((tc, i) => ({
+            index: i,
+            id: tc.id,
+            type: tc.type,
+            function: { name: tc.function.name, arguments: tc.function.arguments },
+          })),
+        },
+      },
+    ],
   });
+  chunks.push({
+    id,
+    object: "chat.completion.chunk",
+    created: 1,
+    model,
+    choices: [],
+    usage: partial.usage ?? {
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      total_tokens: 15,
+    },
+  });
+  return chunks;
+}
+
+function mockStream(chunks: CompletionChunk[]): AsyncIterable<CompletionChunk> {
+  return (async function* () {
+    for (const c of chunks) yield c;
+  })();
 }
 
 function mkConfig(overrides: Partial<RunLoopConfig> = {}): RunLoopConfig {
   const openrouter = {
-    complete: vi.fn().mockResolvedValue(
-      mockResponse({ message: { content: "hello" } })
+    completeStream: vi.fn((_req: unknown, _signal?: AbortSignal) =>
+      mockStream(mockChunks({ content: "hello" }))
     ),
   };
   return {
@@ -70,33 +126,31 @@ describe("runLoop", () => {
       execute: async (args) => `ECHO:${args.text}`,
     });
     const client = {
-      complete: vi.fn()
-        .mockResolvedValueOnce(
-          mockResponse({
+      completeStream: vi.fn()
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
             id: "gen-1",
             finish_reason: "tool_calls",
-            message: {
-              content: null,
-              tool_calls: [
-                {
-                  id: "call-1",
-                  type: "function",
-                  function: { name: "echo", arguments: JSON.stringify({ text: "hi" }) },
-                },
-              ],
-            },
-          })
+            content: null,
+            tool_calls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: { name: "echo", arguments: JSON.stringify({ text: "hi" }) },
+              },
+            ],
+          }))
         )
-        .mockResolvedValueOnce(
-          mockResponse({ id: "gen-2", message: { content: "final" } })
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({ id: "gen-2", content: "final" }))
         ),
     };
     const cfg = mkConfig({ tools: [tool], openrouter: client as any });
 
     await runLoop(cfg, "please echo", {}, collect(events));
 
-    expect(client.complete).toHaveBeenCalledTimes(2);
-    const second = client.complete.mock.calls[1][0];
+    expect(client.completeStream).toHaveBeenCalledTimes(2);
+    const second = client.completeStream.mock.calls[1][0];
     const toolMsg = (second.messages as any[]).find((m) => m.role === "tool");
     expect(toolMsg.tool_call_id).toBe("call-1");
     expect(toolMsg.content).toBe("ECHO:hi");
@@ -123,19 +177,17 @@ describe("runLoop", () => {
       },
     });
     const client = {
-      complete: vi.fn()
-        .mockResolvedValueOnce(
-          mockResponse({
+      completeStream: vi.fn()
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
             finish_reason: "tool_calls",
-            message: {
-              content: null,
-              tool_calls: [
-                { id: "c1", type: "function", function: { name: "peek", arguments: "{}" } },
-              ],
-            },
-          })
+            content: null,
+            tool_calls: [
+              { id: "c1", type: "function", function: { name: "peek", arguments: "{}" } },
+            ],
+          }))
         )
-        .mockResolvedValueOnce(mockResponse({ message: { content: "done" } })),
+        .mockImplementationOnce(() => mockStream(mockChunks({ content: "done" }))),
     };
     const cfg = mkConfig({ tools: [tool], openrouter: client as any });
 
@@ -150,7 +202,7 @@ describe("runLoop", () => {
 
     // Mutating the snapshot must not affect the loop.
     snap.push({ role: "user", content: "MUTATION" });
-    const second = client.complete.mock.calls[1][0];
+    const second = client.completeStream.mock.calls[1][0];
     expect((second.messages as any[]).some((m) => m.content === "MUTATION")).toBe(false);
   });
 
@@ -163,20 +215,18 @@ describe("runLoop", () => {
       execute: async () => { throw new Error("boom"); },
     });
     const client = {
-      complete: vi.fn()
-        .mockResolvedValueOnce(
-          mockResponse({
+      completeStream: vi.fn()
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
             finish_reason: "tool_calls",
-            message: {
-              content: null,
-              tool_calls: [
-                { id: "c", type: "function", function: { name: "crash", arguments: "{}" } },
-              ],
-            },
-          })
+            content: null,
+            tool_calls: [
+              { id: "c", type: "function", function: { name: "crash", arguments: "{}" } },
+            ],
+          }))
         )
-        .mockResolvedValueOnce(
-          mockResponse({ message: { content: "recovered" } })
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({ content: "recovered" }))
         ),
     };
     const cfg = mkConfig({ tools: [tool], openrouter: client as any });
@@ -189,7 +239,7 @@ describe("runLoop", () => {
     } else {
       throw new Error("expected tool:end with error");
     }
-    const secondCall = client.complete.mock.calls[1][0];
+    const secondCall = client.completeStream.mock.calls[1][0];
     const toolMsg = (secondCall.messages as any[]).find((m) => m.role === "tool");
     expect(toolMsg.content).toContain("boom");
     const end = events.find((e) => e.type === "agent:end");
@@ -207,14 +257,12 @@ describe("runLoop", () => {
       execute: async () => "ok",
     });
     const client = {
-      complete: vi.fn().mockResolvedValue(
-        mockResponse({
+      completeStream: vi.fn().mockImplementation(() =>
+        mockStream(mockChunks({
           finish_reason: "tool_calls",
-          message: {
-            content: null,
-            tool_calls: [{ id: "c", type: "function", function: { name: "loop", arguments: "{}" } }],
-          },
-        })
+          content: null,
+          tool_calls: [{ id: "c", type: "function", function: { name: "loop", arguments: "{}" } }],
+        }))
       ),
     };
     const cfg = mkConfig({ tools: [tool], maxTurns: 2, openrouter: client as any });
@@ -225,7 +273,7 @@ describe("runLoop", () => {
     if (end?.type === "agent:end") {
       expect(end.result.stopReason).toBe("max_turns");
     }
-    expect(client.complete).toHaveBeenCalledTimes(2);
+    expect(client.completeStream).toHaveBeenCalledTimes(2);
   });
 
   test("AbortSignal triggers aborted stopReason between turns", async () => {
@@ -238,14 +286,12 @@ describe("runLoop", () => {
       execute: async () => { ac.abort(); return "ok"; },
     });
     const client = {
-      complete: vi.fn().mockResolvedValue(
-        mockResponse({
+      completeStream: vi.fn().mockImplementation(() =>
+        mockStream(mockChunks({
           finish_reason: "tool_calls",
-          message: {
-            content: null,
-            tool_calls: [{ id: "c", type: "function", function: { name: "loop", arguments: "{}" } }],
-          },
-        })
+          content: null,
+          tool_calls: [{ id: "c", type: "function", function: { name: "loop", arguments: "{}" } }],
+        }))
       ),
     };
     const cfg = mkConfig({ tools: [tool], openrouter: client as any });
@@ -256,7 +302,7 @@ describe("runLoop", () => {
     if (end?.type === "agent:end") {
       expect(end.result.stopReason).toBe("aborted");
     }
-    expect(client.complete).toHaveBeenCalledTimes(1);
+    expect(client.completeStream).toHaveBeenCalledTimes(1);
   });
 
   test("sessionId seeds history and persists updated history on exit (no system in store)", async () => {
@@ -283,12 +329,16 @@ describe("runLoop", () => {
       { role: "user", content: "earlier" },
       { role: "assistant", content: "earlier reply" },
     ]);
-    const client = { complete: vi.fn().mockResolvedValue(mockResponse({ message: { content: "ok" } })) };
+    const client = {
+      completeStream: vi.fn().mockImplementation(() =>
+        mockStream(mockChunks({ content: "ok" }))
+      ),
+    };
     const cfg = mkConfig({ sessionStore: store, openrouter: client as any });
 
     await runLoop(cfg, "followup", { sessionId: "s1" }, collect([]));
 
-    const [req] = client.complete.mock.calls[0];
+    const [req] = client.completeStream.mock.calls[0];
     const systems = (req.messages as any[]).filter((m) => m.role === "system");
     expect(systems).toHaveLength(1);
     expect(systems[0].content).toBe("you are helpful");
@@ -300,12 +350,16 @@ describe("runLoop", () => {
       { role: "user", content: "prev" },
       { role: "assistant", content: "prev reply" },
     ]);
-    const client = { complete: vi.fn().mockResolvedValue(mockResponse({ message: { content: "ok" } })) };
+    const client = {
+      completeStream: vi.fn().mockImplementation(() =>
+        mockStream(mockChunks({ content: "ok" }))
+      ),
+    };
     const cfg = mkConfig({ sessionStore: store, openrouter: client as any });
 
     await runLoop(cfg, "hi", { sessionId: "s1", system: "new prompt" }, collect([]));
 
-    const [req] = client.complete.mock.calls[0];
+    const [req] = client.completeStream.mock.calls[0];
     const sys = (req.messages as any[]).find((m) => m.role === "system");
     expect(sys.content).toBe("new prompt");
 
@@ -317,9 +371,13 @@ describe("runLoop", () => {
   test("infrastructure error from client aborts with stopReason=error", async () => {
     const events: AgentEvent[] = [];
     const client = {
-      complete: vi.fn().mockRejectedValue(
-        Object.assign(new Error("rate limited"), { code: 429 })
-      ),
+      completeStream: vi.fn().mockImplementation(() => {
+        return (async function* () {
+          throw Object.assign(new Error("rate limited"), { code: 429 });
+          // eslint-disable-next-line no-unreachable
+          yield undefined as any;
+        })();
+      }),
     };
     const cfg = mkConfig({ openrouter: client as any });
 
@@ -349,9 +407,13 @@ describe("runLoop", () => {
     ];
     await store.set("s1", [...before]);
     const client = {
-      complete: vi.fn().mockRejectedValue(
-        Object.assign(new Error("boom"), { code: 500 })
-      ),
+      completeStream: vi.fn().mockImplementation(() => {
+        return (async function* () {
+          throw Object.assign(new Error("boom"), { code: 500 });
+          // eslint-disable-next-line no-unreachable
+          yield undefined as any;
+        })();
+      }),
     };
     const cfg = mkConfig({ sessionStore: store, openrouter: client as any });
 
@@ -368,23 +430,23 @@ describe("runLoop", () => {
     ): Promise<AgentEvent[]> {
       const events: AgentEvent[] = [];
       const client = {
-        complete: vi.fn()
-          .mockResolvedValueOnce(
-            mockResponse({
+        completeStream: vi.fn()
+          .mockImplementationOnce(() =>
+            mockStream(mockChunks({
               finish_reason: "tool_calls",
-              message: {
-                content: null,
-                tool_calls: [
-                  {
-                    id: "c1",
-                    type: "function",
-                    function: { name: tool.name, arguments: JSON.stringify(args) },
-                  },
-                ],
-              },
-            })
+              content: null,
+              tool_calls: [
+                {
+                  id: "c1",
+                  type: "function",
+                  function: { name: tool.name, arguments: JSON.stringify(args) },
+                },
+              ],
+            }))
           )
-          .mockResolvedValueOnce(mockResponse({ id: "gen-2", message: { content: "final" } })),
+          .mockImplementationOnce(() =>
+            mockStream(mockChunks({ id: "gen-2", content: "final" }))
+          ),
       };
       const cfg = mkConfig({ tools: [tool], openrouter: client as any });
       await runLoop(cfg, "go", {}, collect(events));
@@ -490,9 +552,13 @@ describe("runLoop", () => {
     await store.set("s1", [...before]);
     const ctrl = new AbortController();
     const client = {
-      complete: vi.fn().mockImplementation(async () => {
-        ctrl.abort();
-        throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      completeStream: vi.fn().mockImplementation(() => {
+        return (async function* () {
+          ctrl.abort();
+          throw Object.assign(new Error("aborted"), { name: "AbortError" });
+          // eslint-disable-next-line no-unreachable
+          yield undefined as any;
+        })();
       }),
     };
     const cfg = mkConfig({ sessionStore: store, openrouter: client as any });
@@ -507,19 +573,192 @@ describe("runLoop", () => {
       expect(end.result.stopReason).toBe("aborted");
     }
   });
+
+  test("emits message:delta events as text chunks arrive and assembles final message", async () => {
+    const events: AgentEvent[] = [];
+    const openrouter = {
+      completeStream: vi.fn(() =>
+        mockStream([
+          {
+            id: "gen-1",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "m",
+            choices: [
+              {
+                finish_reason: null,
+                native_finish_reason: null,
+                delta: { content: "Hel" },
+              },
+            ],
+          },
+          {
+            id: "gen-1",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "m",
+            choices: [
+              {
+                finish_reason: null,
+                native_finish_reason: null,
+                delta: { content: "lo " },
+              },
+            ],
+          },
+          {
+            id: "gen-1",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "m",
+            choices: [
+              {
+                finish_reason: "stop",
+                native_finish_reason: "stop",
+                delta: { content: "world" },
+              },
+            ],
+          },
+          {
+            id: "gen-1",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "m",
+            choices: [],
+            usage: { prompt_tokens: 1, completion_tokens: 3, total_tokens: 4 },
+          },
+        ])
+      ),
+    };
+    const cfg = mkConfig({ openrouter: openrouter as any });
+
+    await runLoop(cfg, "hi", {}, collect(events));
+
+    const deltas = events.filter((e) => e.type === "message:delta");
+    expect(deltas.map((e: any) => e.text)).toEqual(["Hel", "lo ", "world"]);
+
+    const msg = events.find((e) => e.type === "message");
+    expect(msg?.type).toBe("message");
+    if (msg?.type === "message") {
+      expect(msg.message.role).toBe("assistant");
+      expect(msg.message.content).toBe("Hello world");
+    }
+
+    const end = events.find((e) => e.type === "agent:end");
+    if (end?.type === "agent:end") {
+      expect(end.result.text).toBe("Hello world");
+      expect(end.result.stopReason).toBe("done");
+      expect(end.result.usage.total_tokens).toBe(4);
+    }
+  });
+
+  test("assembles tool_calls from streaming deltas across chunks", async () => {
+    const firstTurnChunks: CompletionChunk[] = [
+      {
+        id: "gen-1",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: "m",
+        choices: [
+          {
+            finish_reason: null,
+            native_finish_reason: null,
+            delta: {
+              content: null,
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "call-1",
+                  type: "function",
+                  function: { name: "echo", arguments: '{"t' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        id: "gen-1",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: "m",
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            native_finish_reason: "tool_calls",
+            delta: {
+              content: null,
+              tool_calls: [{ index: 0, function: { arguments: 'ext":"hi"}' } }],
+            },
+          },
+        ],
+      },
+      {
+        id: "gen-1",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: "m",
+        choices: [],
+        usage: { prompt_tokens: 1, completion_tokens: 3, total_tokens: 4 },
+      },
+    ];
+    const openrouter = {
+      completeStream: vi
+        .fn<(req: any, signal?: AbortSignal) => AsyncIterable<CompletionChunk>>()
+        .mockImplementationOnce(() => mockStream(firstTurnChunks))
+        .mockImplementationOnce(() => mockStream(mockChunks({ id: "gen-2", content: "done" }))),
+    };
+
+    const events: AgentEvent[] = [];
+    const tool = new Tool({
+      name: "echo",
+      description: "echo",
+      inputSchema: z.object({ text: z.string() }),
+      execute: async (args) => `ECHO:${args.text}`,
+    });
+
+    const cfg = mkConfig({ openrouter: openrouter as any, tools: [tool] });
+    await runLoop(cfg, "hi", {}, collect(events));
+
+    const toolEnd = events.find((e) => e.type === "tool:end");
+    expect(toolEnd?.type).toBe("tool:end");
+    if (toolEnd?.type === "tool:end" && "output" in toolEnd) {
+      expect(toolEnd.output).toBe("ECHO:hi");
+    }
+  });
+
+  test("transport error during stream yields stopReason error", async () => {
+    const openrouter = {
+      completeStream: vi.fn(() => {
+        return (async function* () {
+          throw new Error("boom");
+          // eslint-disable-next-line no-unreachable
+          yield undefined as any;
+        })();
+      }),
+    };
+    const events: AgentEvent[] = [];
+    const cfg = mkConfig({ openrouter: openrouter as any });
+    await runLoop(cfg, "hi", {}, collect(events));
+    const end = events.find((e) => e.type === "agent:end");
+    if (end?.type === "agent:end") {
+      expect(end.result.stopReason).toBe("error");
+      expect(end.result.error?.message).toBe("boom");
+    }
+  });
 });
 
 describe("Usage accumulation — multimodal & cost", () => {
   test("sums audio_tokens and video_tokens across turns", async () => {
     const openrouter = {
-      complete: vi
+      completeStream: vi
         .fn()
-        .mockResolvedValueOnce(
-          mockResponse({
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
             id: "gen-a",
-            message: { content: null, tool_calls: [
+            content: null,
+            tool_calls: [
               { id: "c1", type: "function", function: { name: "noop", arguments: "{}" } },
-            ] },
+            ],
             finish_reason: "tool_calls",
             usage: {
               prompt_tokens: 10, completion_tokens: 5, total_tokens: 15,
@@ -528,19 +767,19 @@ describe("Usage accumulation — multimodal & cost", () => {
               cost_details: { upstream_inference_prompt_cost: 0.01, upstream_inference_completions_cost: 0.02 },
               is_byok: false,
             } as any,
-          })
+          }))
         )
-        .mockResolvedValueOnce(
-          mockResponse({
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
             id: "gen-b",
-            message: { content: "done" },
+            content: "done",
             usage: {
               prompt_tokens: 8, completion_tokens: 4, total_tokens: 12,
               prompt_tokens_details: { audio_tokens: 5 },
               cost_details: { upstream_inference_prompt_cost: 0.03, upstream_inference_completions_cost: 0.01 },
               is_byok: true,
             } as any,
-          })
+          }))
         ),
     };
     const noop = new Tool({

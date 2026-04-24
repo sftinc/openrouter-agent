@@ -1,9 +1,11 @@
 import type { Message, Result, Usage } from "../types/index.js";
 import type {
-  CompletionsResponse,
+  CompletionChunk,
   LLMConfig,
   OpenRouterTool,
+  ToolCallDelta,
 } from "../openrouter/index.js";
+import type { ToolCall } from "../types/index.js";
 import type { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
@@ -24,10 +26,10 @@ export interface RunLoopConfig {
   maxTurns: number;
   sessionStore?: SessionStore;
   openrouter: {
-    complete: (
+    completeStream: (
       request: { messages: Message[]; tools?: OpenRouterTool[] } & LLMConfig,
       signal?: AbortSignal
-    ) => Promise<CompletionsResponse>;
+    ) => AsyncIterable<CompletionChunk>;
   };
   parentRunId?: string;
   display?: {
@@ -250,6 +252,53 @@ function lastAssistantText(messages: Message[]): string {
   return "";
 }
 
+function mergeToolCallDelta(
+  buf: Map<number, ToolCallDelta>,
+  delta: ToolCallDelta
+): void {
+  const existing = buf.get(delta.index);
+  if (!existing) {
+    buf.set(delta.index, {
+      index: delta.index,
+      id: delta.id,
+      type: delta.type,
+      function: {
+        name: delta.function?.name,
+        arguments: delta.function?.arguments ?? "",
+      },
+    });
+    return;
+  }
+  if (existing.id === undefined && delta.id !== undefined) existing.id = delta.id;
+  if (existing.type === undefined && delta.type !== undefined) existing.type = delta.type;
+  if (delta.function?.name && !existing.function?.name) {
+    existing.function = { ...existing.function, name: delta.function.name };
+  }
+  if (delta.function?.arguments) {
+    existing.function = {
+      ...existing.function,
+      arguments: (existing.function?.arguments ?? "") + delta.function.arguments,
+    };
+  }
+}
+
+function assembleToolCalls(buf: Map<number, ToolCallDelta>): ToolCall[] {
+  const out: ToolCall[] = [];
+  const indices = [...buf.keys()].sort((a, b) => a - b);
+  for (const i of indices) {
+    const d = buf.get(i)!;
+    out.push({
+      id: d.id ?? "",
+      type: d.type ?? "function",
+      function: {
+        name: d.function?.name ?? "",
+        arguments: d.function?.arguments ?? "",
+      },
+    });
+  }
+  return out;
+}
+
 export async function runLoop(
   config: RunLoopConfig,
   input: string | Message[],
@@ -305,7 +354,10 @@ export async function runLoop(
 
   const deps: ToolDeps = {
     complete: async (msgs, opts) => {
-      const res = await config.openrouter.complete(
+      let content = "";
+      const toolBuf = new Map<number, ToolCallDelta>();
+      let u: Usage | undefined;
+      for await (const chunk of config.openrouter.completeStream(
         {
           ...overrides,
           ...(opts?.client ?? {}),
@@ -313,13 +365,20 @@ export async function runLoop(
           tools: opts?.tools,
         },
         signal
-      );
-      const choice = res.choices[0];
+      )) {
+        if (chunk.usage) u = chunk.usage;
+        const sc = chunk.choices[0];
+        if (!sc) continue;
+        if (typeof sc.delta.content === "string") content += sc.delta.content;
+        if (sc.delta.tool_calls) {
+          for (const d of sc.delta.tool_calls) mergeToolCallDelta(toolBuf, d);
+        }
+      }
+      const tool_calls = assembleToolCalls(toolBuf);
       return {
-        content: choice?.message.content ?? null,
-        usage: res.usage ?? zeroUsage(),
-        tool_calls: choice?.message.tool_calls,
-        annotations: choice?.message.annotations,
+        content: content.length > 0 ? content : null,
+        usage: u ?? zeroUsage(),
+        tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
       };
     },
     emit,
@@ -335,12 +394,40 @@ export async function runLoop(
       break;
     }
 
-    let response: CompletionsResponse;
+    let contentBuf = "";
+    const toolCallBuf = new Map<number, ToolCallDelta>();
+    let finishReason: string | null = null;
+    let turnError: { code?: number; message: string; metadata?: Record<string, unknown> } | undefined;
+    let generationId: string | null = null;
+    let turnUsage: Usage | undefined;
+
     try {
-      response = await config.openrouter.complete(
+      for await (const chunk of config.openrouter.completeStream(
         { ...overrides, messages: wireMessages(), tools: openrouterTools },
         signal
-      );
+      )) {
+        if (!generationId && chunk.id) generationId = chunk.id;
+        if (chunk.usage) turnUsage = chunk.usage;
+
+        const sc = chunk.choices[0];
+        if (!sc) continue;
+
+        if (typeof sc.delta.content === "string" && sc.delta.content.length > 0) {
+          contentBuf += sc.delta.content;
+          emit({ type: "message:delta", runId, text: sc.delta.content });
+        }
+        if (sc.delta.tool_calls) {
+          for (const d of sc.delta.tool_calls) mergeToolCallDelta(toolCallBuf, d);
+        }
+        if (sc.finish_reason) finishReason = sc.finish_reason;
+        if (sc.error) {
+          turnError = {
+            code: sc.error.code,
+            message: sc.error.message,
+            metadata: sc.error.metadata,
+          };
+        }
+      }
     } catch (err) {
       if (signal?.aborted) {
         stopReason = "aborted";
@@ -357,46 +444,45 @@ export async function runLoop(
       break;
     }
 
-    generationIds.push(response.id);
-    usage = addUsage(usage, response.usage);
+    if (generationId) generationIds.push(generationId);
+    if (turnUsage) usage = addUsage(usage, turnUsage);
 
-    const choice = response.choices[0];
-    if (!choice) {
-      stopReason = "error";
-      error = { message: "OpenRouter response had no choices" };
-      emitError(undefined, error.message);
-      break;
-    }
-
+    const assembledToolCalls = assembleToolCalls(toolCallBuf);
+    const hasToolCalls = assembledToolCalls.length > 0;
     const assistantMsg: Message = {
       role: "assistant",
-      content: choice.message.content,
-      tool_calls: choice.message.tool_calls,
+      content: contentBuf.length > 0 ? contentBuf : null,
+      tool_calls: hasToolCalls ? assembledToolCalls : undefined,
     };
     messages.push(assistantMsg);
     emit({ type: "message", runId, message: assistantMsg });
 
-    const fr = choice.finish_reason;
-    const mapped = FINISH_REASON_TO_STOP[fr ?? ""];
+    if (turnError) {
+      stopReason = "error";
+      error = turnError;
+      emitError(turnError.code, turnError.message);
+      break;
+    }
+
+    if (finishReason === "error") {
+      stopReason = "error";
+      error = { message: "Unknown error from provider" };
+      emitError(undefined, error.message);
+      break;
+    }
+
+    const mapped = FINISH_REASON_TO_STOP[finishReason ?? ""];
     if (mapped) {
       stopReason = mapped;
       break;
     }
-    if (fr === "error") {
-      stopReason = "error";
-      error = choice.error
-        ? { code: choice.error.code, message: choice.error.message, metadata: choice.error.metadata }
-        : { message: "Unknown error from provider" };
-      emitError(error.code, error.message);
-      break;
-    }
 
-    if (!choice.message.tool_calls || choice.message.tool_calls.length === 0) {
+    if (!hasToolCalls) {
       stopReason = "done";
       break;
     }
 
-    for (const toolCall of choice.message.tool_calls) {
+    for (const toolCall of assembledToolCalls) {
       const toolMessage = await executeToolCall(toolCall, toolByName, deps, runId, emit);
       messages.push(toolMessage);
     }
