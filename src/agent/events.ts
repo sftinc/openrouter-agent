@@ -5,6 +5,28 @@ export interface EventDisplay {
   content?: unknown;
 }
 
+/**
+ * The discriminated-union stream emitted by `runLoop` and consumed by
+ * `Agent.runStream()` and display hooks. Discriminate on `event.type`.
+ *
+ * **Lifecycle order** (per run):
+ *   `agent:start` → (`message` | `tool:start` + `tool:progress*` + `tool:end`)* → (`error`)? → `agent:end`
+ *
+ * **Events:**
+ * - `agent:start` — fires once, immediately after the runId is assigned,
+ *   before any session load or LLM call.
+ * - `message` — fires once per assistant message (including tool-call
+ *   messages). Does NOT fire for user or tool-role messages.
+ * - `tool:start` — fires when a tool invocation begins. `input` is the
+ *   parsed JSON args (best-effort; `{}` on parse failure).
+ * - `tool:progress` — only fires if a tool emits one manually via
+ *   `deps.emit`. The loop itself never emits this.
+ * - `tool:end` — fires once per tool invocation. Discriminate success vs
+ *   failure via `"error" in event`.
+ * - `error` — fires once at most per run, just before a terminal
+ *   `stopReason: "error"`.
+ * - `agent:end` — fires once, last, with the final `Result`.
+ */
 export type AgentEvent =
   | {
       type: "agent:start";
@@ -65,7 +87,13 @@ export type AgentEvent =
 
 /**
  * Fallback display for events that don't carry a `display` field.
- * Consumers should prefer `event.display` if set: `event.display ?? defaultDisplay(event)`.
+ * Consumers should prefer `event.display` if set:
+ * `event.display ?? defaultDisplay(event)`.
+ *
+ * @param event Any `AgentEvent`.
+ * @returns An `EventDisplay` with a human-readable title (and optional
+ *   content, for errors only). Callers can use this to render a progress
+ *   line in a UI without handling every event variant explicitly.
  */
 export function defaultDisplay(event: AgentEvent): EventDisplay {
   switch (event.type) {
