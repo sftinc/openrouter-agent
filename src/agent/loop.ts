@@ -193,6 +193,10 @@ export async function runLoop(
     display: safeDisplay(() => config.display?.start?.(input)),
   });
 
+  const emitError = (code: number | undefined, message: string): void => {
+    emit({ type: "error", runId, error: code !== undefined ? { code, message } : { message } });
+  };
+
   const sessionMessages =
     options.sessionId && config.sessionStore
       ? await config.sessionStore.get(options.sessionId)
@@ -268,7 +272,7 @@ export async function runLoop(
         message: anyErr.message ?? String(err),
         metadata: anyErr.metadata,
       };
-      emit({ type: "error", runId, error: { code: anyErr.code, message: error.message } });
+      emitError(anyErr.code, error.message);
       break;
     }
 
@@ -279,7 +283,7 @@ export async function runLoop(
     if (!choice) {
       stopReason = "error";
       error = { message: "OpenRouter response had no choices" };
-      emit({ type: "error", runId, error: { message: error.message } });
+      emitError(undefined, error.message);
       break;
     }
 
@@ -302,7 +306,7 @@ export async function runLoop(
       error = choice.error
         ? { code: choice.error.code, message: choice.error.message, metadata: choice.error.metadata }
         : { message: "Unknown error from provider" };
-      emit({ type: "error", runId, error: { code: error.code, message: error.message } });
+      emitError(error.code, error.message);
       break;
     }
 
