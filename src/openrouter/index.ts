@@ -8,6 +8,8 @@ export type {
   CompletionsResponse,
   NonStreamingChoice,
   ErrorResponse,
+  Annotation,
+  UrlCitationAnnotation,
 } from "./types.js";
 export { DEFAULT_MODEL } from "./types.js";
 export { OpenRouterClient, OpenRouterError } from "./client.js";

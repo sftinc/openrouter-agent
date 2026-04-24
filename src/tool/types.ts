@@ -1,5 +1,5 @@
 import type { Message, ToolCall, Usage } from "../types/index.js";
-import type { LLMConfig, OpenRouterTool } from "../openrouter/index.js";
+import type { Annotation, LLMConfig, OpenRouterTool } from "../openrouter/index.js";
 import type { AgentEvent } from "../agent/events.js";
 
 /**
@@ -27,7 +27,12 @@ export interface ToolDeps {
   complete: (
     messages: Message[],
     options?: { client?: LLMConfig; tools?: OpenRouterTool[] }
-  ) => Promise<{ content: string | null; usage: Usage; tool_calls?: ToolCall[] }>;
+  ) => Promise<{
+    content: string | null;
+    usage: Usage;
+    tool_calls?: ToolCall[];
+    annotations?: Annotation[];
+  }>;
   emit?: (event: AgentEvent) => void;
   signal?: AbortSignal;
   runId?: string;

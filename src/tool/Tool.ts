@@ -18,8 +18,16 @@ export interface ToolDisplayHooks<Args> {
   title?: string | ((args: Args) => string);
   start?: (args: Args) => Partial<EventDisplay>;
   progress?: (args: Args, meta: { elapsedMs: number }) => Partial<EventDisplay>;
-  success?: (args: Args, output: unknown) => Partial<EventDisplay>;
-  error?: (args: Args, error: unknown) => Partial<EventDisplay>;
+  success?: (
+    args: Args,
+    output: unknown,
+    metadata?: Record<string, unknown>
+  ) => Partial<EventDisplay>;
+  error?: (
+    args: Args,
+    error: unknown,
+    metadata?: Record<string, unknown>
+  ) => Partial<EventDisplay>;
 }
 
 /**

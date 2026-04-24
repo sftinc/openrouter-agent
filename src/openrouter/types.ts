@@ -142,6 +142,25 @@ export interface WebSearchServerTool {
  */
 export type OpenRouterTool = FunctionTool | DatetimeServerTool | WebSearchServerTool
 
+/**
+ * URL citation annotation attached to an assistant message. Populated by
+ * OpenRouter when a server tool (e.g. `openrouter:web_search`) returns sources,
+ * normalized across providers. See docs/openrouter/tool-web_search.md.
+ */
+export interface UrlCitationAnnotation {
+	type: 'url_citation'
+	url_citation: {
+		url: string
+		title: string
+		content?: string
+		start_index?: number
+		end_index?: number
+	}
+}
+
+/** Any message-level annotation. Currently only url citations are defined. */
+export type Annotation = UrlCitationAnnotation
+
 /** Non-streaming choice shape from OpenRouter. */
 export interface NonStreamingChoice {
 	/** Normalized finish reason across providers. See docs/openrouter/llm.md. */
@@ -152,6 +171,7 @@ export interface NonStreamingChoice {
 		content: string | null
 		role: string
 		tool_calls?: ToolCall[]
+		annotations?: Annotation[]
 	}
 	/** Populated when `finish_reason === "error"`. */
 	error?: ErrorResponse

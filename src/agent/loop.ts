@@ -186,7 +186,7 @@ async function executeToolCall(
       toolUseId,
       error: err,
       metadata: result.metadata,
-      display: resolveToolDisplay(tool, parsedArgs, (d) => d.error?.(parsedArgs, err)),
+      display: resolveToolDisplay(tool, parsedArgs, (d) => d.error?.(parsedArgs, err, result.metadata)),
     });
     return buildToolErrorMessage(toolCall.id, err);
   }
@@ -198,7 +198,7 @@ async function executeToolCall(
     toolUseId,
     output: out,
     metadata: result.metadata,
-    display: resolveToolDisplay(tool, parsedArgs, (d) => d.success?.(parsedArgs, out)),
+    display: resolveToolDisplay(tool, parsedArgs, (d) => d.success?.(parsedArgs, out, result.metadata)),
   });
   return buildToolResultMessage(toolCall.id, out);
 }
@@ -319,6 +319,7 @@ export async function runLoop(
         content: choice?.message.content ?? null,
         usage: res.usage ?? zeroUsage(),
         tool_calls: choice?.message.tool_calls,
+        annotations: choice?.message.annotations,
       };
     },
     emit,
