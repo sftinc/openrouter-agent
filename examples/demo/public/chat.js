@@ -5,11 +5,11 @@ const sendBtn = document.getElementById("send");
 const newChatBtn = document.getElementById("new-chat");
 
 const SESSION_KEY = "openrouter-agent-demo-session";
+// The server owns session ids: it mints one on the first message and echoes
+// it back on every response via the X-Session-Id header. We just hold onto
+// whatever the server last gave us, and clearing this to null starts a new
+// conversation on the next send.
 let sessionId = localStorage.getItem(SESSION_KEY);
-if (!sessionId) {
-  sessionId = crypto.randomUUID();
-  localStorage.setItem(SESSION_KEY, sessionId);
-}
 
 function el(tag, className, text) {
   const e = document.createElement(tag);
@@ -120,6 +120,12 @@ async function runRequest(message) {
       return;
     }
 
+    const returnedSessionId = response.headers.get("X-Session-Id");
+    if (returnedSessionId) {
+      sessionId = returnedSessionId;
+      localStorage.setItem(SESSION_KEY, sessionId);
+    }
+
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -206,8 +212,8 @@ async function runRequest(message) {
 }
 
 newChatBtn.addEventListener("click", () => {
-  sessionId = crypto.randomUUID();
-  localStorage.setItem(SESSION_KEY, sessionId);
+  sessionId = null;
+  localStorage.removeItem(SESSION_KEY);
   messagesEl.replaceChildren();
   input.value = "";
   input.focus();

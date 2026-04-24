@@ -4,7 +4,7 @@ import { extname, join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SessionBusyError } from '../../src/index.js'
 import type { AgentEvent } from '../../src/index.js'
-import { agent } from './agent.js'
+import { agent, sessionStore } from './agent.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 export const PUBLIC_DIR = resolve(__dirname, 'public')
@@ -31,12 +31,18 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse): Pro
 	}
 
 	const message = (body.message ?? '').trim()
-	const sessionId = body.sessionId?.trim()
-	if (!message || !sessionId) {
+	if (!message) {
 		res.writeHead(400, { 'Content-Type': 'application/json' })
-		res.end(JSON.stringify({ error: 'message and sessionId are required' }))
+		res.end(JSON.stringify({ error: 'message is required' }))
 		return
 	}
+	// Session ids are owned by the server. The client only echoes back whatever
+	// we gave it last. If the client sent nothing, or sent an id we don't
+	// recognize, mint a fresh one and return it via the X-Session-Id response
+	// header. This prevents a client from dictating or guessing session ids.
+	const claimed = body.sessionId?.trim()
+	const isKnown = claimed ? (await sessionStore.get(claimed)) !== null : false
+	const sessionId = isKnown ? (claimed as string) : crypto.randomUUID()
 
 	// Abort the agent run if the client disconnects before the response ends.
 	// Combined with the transactional session persist in runLoop, this means a
@@ -71,6 +77,7 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse): Pro
 		'Content-Type': 'application/x-ndjson',
 		'Cache-Control': 'no-cache',
 		'X-Accel-Buffering': 'no',
+		'X-Session-Id': sessionId,
 	})
 
 	const send = (event: AgentEvent) => {

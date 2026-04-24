@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { setOpenRouterClient, Tool, Agent } from '../../src/index.js'
+import { setOpenRouterClient, Tool, Agent, InMemorySessionStore } from '../../src/index.js'
 
 function randomDelay(minMs: number, maxMs: number): Promise<void> {
 	const ms = minMs + Math.random() * (maxMs - minMs)
@@ -121,7 +121,13 @@ setOpenRouterClient({
 
 // ---------------------------------------------------------------------------
 // Agent
+//
+// The session store is owned by the demo (not defaulted by Agent) so the
+// backend can check whether a client-supplied session id actually refers to
+// a known session before honoring it. Unknown ids are treated as absent.
 // ---------------------------------------------------------------------------
+
+export const sessionStore = new InMemorySessionStore()
 
 export const agent = new Agent({
 	name: 'demo-assistant',
@@ -133,4 +139,5 @@ export const agent = new Agent({
 	].join('\n'),
 	tools: [calculator, currentTime, webSearch],
 	maxTurns: 8,
+	sessionStore,
 })
