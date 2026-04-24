@@ -88,4 +88,3 @@ export interface CompletionsRequest extends LLMConfig {
 }
 
 export const DEFAULT_MODEL = 'anthropic/claude-haiku-4.5'
-// export const DEFAULT_MODEL = 'inception/mercury-2'
