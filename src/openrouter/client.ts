@@ -41,12 +41,30 @@ export interface OpenRouterClientOptions extends LLMConfig {
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 
+/**
+ * Thin HTTP client for OpenRouter's `/chat/completions` endpoint. Holds the
+ * API key (from env or constructor), optional `referer`/`title` headers for
+ * OpenRouter attribution, and default `LLMConfig` values applied to every
+ * request.
+ *
+ * Per-request fields always override client defaults, which override the
+ * built-in `DEFAULT_MODEL` fallback. Streaming is not supported — see
+ * `complete()` JSDoc.
+ */
 export class OpenRouterClient {
   private readonly apiKey: string;
   private readonly referer?: string;
   private readonly title?: string;
   private readonly defaults: LLMConfig;
 
+  /**
+   * @param options Client options. `apiKey` falls back to the
+   *   `OPENROUTER_API_KEY` env var; if neither is set the constructor throws.
+   *   `title` is sent as `X-OpenRouter-Title`; `referer` as `HTTP-Referer`.
+   *   All other fields (`model`, `temperature`, etc.) become `LLMConfig`
+   *   defaults.
+   * @throws Error if no API key is available from either source.
+   */
   constructor(options: OpenRouterClientOptions) {
     const { apiKey, title, referer, ...llmDefaults } = options;
     const envKey =
