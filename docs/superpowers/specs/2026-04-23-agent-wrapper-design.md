@@ -52,16 +52,12 @@ src/
     types.ts            // wire types matching docs/openrouter/llm.md
     index.ts
   types/
-    Message.ts
+    Message.ts          // Message, ContentPart, ToolCall, Usage, Result, MESSAGE_ROLES, STOP_REASONS
     index.ts
   index.ts              // top-level barrel re-exports the public surface
 ```
 
 Every subfolder exposes its public surface via its `index.ts`. Consumers import from the folder (`import { Agent } from "./agent"`), never from a specific file. The top-level `src/index.ts` re-exports everything external consumers need.
-
-**Note (2026-04-23):** Implementation consolidated `Message`, `ContentPart`,
-`ToolCall`, `Usage`, and `Result` into a single `src/types/Message.ts` file.
-The folder structure still exposes them via `src/types/index.ts`.
 
 ## Types
 
@@ -94,11 +90,7 @@ export type ToolResult =
   | { error: string; metadata?: Record<string, unknown> };
 ```
 
-**Note (2026-04-23):** The original spec proposed `{ isError?: boolean }`.
-Implementation replaced it with a discriminated union so TypeScript narrows
-automatically. Behavior is identical.
-
-Handler return value is `string | ToolResult`. A plain string is sugar for `{ content: string }`. Before sending to OpenRouter, `content` is serialized: strings as-is, non-strings via `JSON.stringify`.
+Handler return value is `string | ToolResult`. A plain string is sugar for `{ content: string }`. Before sending to OpenRouter, `content` is serialized: strings as-is, non-strings via `JSON.stringify`. Failure is signaled either by throwing (the loop catches) or by returning `{ error }`. `metadata` is optional and never sent to the model — it's surfaced on `tool:end` events for UI/logs.
 
 ### `ToolDeps`
 
@@ -144,7 +136,7 @@ type AgentEvent =
   | { type: "error";          runId: string; error: { code?: number; message: string }; display?: EventDisplay };
 ```
 
-**Note (2026-04-23):** The original spec modeled `tool:end` as a single variant with an `isError: boolean` flag. Implementation replaced it with a discriminated union (success carries `output`; failure carries `error`) so TypeScript narrows automatically. `metadata` is forwarded from the tool's `ToolResult`. Behavior is identical.
+`tool:end` is a discriminated union: success carries `output`, failure carries `error`. Discriminate with `"error" in event`. `metadata` is forwarded from the tool's `ToolResult`.
 
 Subagent events bubble up to the parent's stream with `parentRunId` set. Consumers reconstruct a tree by correlating `runId` / `parentRunId`.
 
@@ -259,7 +251,7 @@ class Tool<Args = any> {
 
 `toOpenRouterTool` uses `zod-to-json-schema` to convert the Zod schema to JSON Schema for the wire format.
 
-**Note (2026-04-23):** The original spec proposed a single `end?(args, output, { isError })` display hook. Implementation split it into `success?(args, output)` and `error?(args, error)` to align with the discriminated `ToolResult` shape. Hook returns are `Partial<EventDisplay>` — merged with the top-level `title` default.
+Display hooks return `Partial<EventDisplay>`; returned fields are merged with the top-level `title` default. `success` fires on a successful `ToolResult`; `error` fires when the tool throws or returns `{ error }`.
 
 ## `Agent` class
 

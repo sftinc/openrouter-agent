@@ -724,14 +724,13 @@ import type { AgentEvent } from "../agent/events.js";
 /**
  * Normalized tool result. A string return from a tool handler is sugar for
  * `{ content: string }`. `content` is what the model sees (serialized to
- * string before sending if not already a string). `isError` and `metadata`
- * are for events, UI, and logs — never sent to the model.
+ * string before sending if not already a string). Failure is signaled either
+ * by throwing (the loop catches) or by returning `{ error: string }`.
+ * `metadata` is for events, UI, and logs — never sent to the model.
  */
-export interface ToolResult {
-  content: unknown;
-  isError?: boolean;
-  metadata?: Record<string, unknown>;
-}
+export type ToolResult =
+  | { content: unknown; metadata?: Record<string, unknown> }
+  | { error: string; metadata?: Record<string, unknown> };
 
 /**
  * Dependencies injected into every tool's execute() call. Optional fields are
@@ -816,11 +815,11 @@ describe("Tool", () => {
       execute: async (args) => args.text,
       display: {
         start: (args) => ({ title: `Echoing ${args.text}` }),
-        end: (args, output) => ({ title: `Echoed`, content: output }),
+        success: (args, output) => ({ title: `Echoed`, content: output }),
       },
     });
     expect(tool.display?.start?.({ text: "hi" })).toEqual({ title: "Echoing hi" });
-    expect(tool.display?.end?.({ text: "hi" }, "hi", { isError: false })).toEqual({
+    expect(tool.display?.success?.({ text: "hi" }, "hi")).toEqual({
       title: "Echoed",
       content: "hi",
     });
@@ -843,9 +842,12 @@ import type { ToolDeps, ToolResult } from "./types.js";
 import type { EventDisplay } from "../agent/events.js";
 
 export interface ToolDisplayHooks<Args> {
-  start?: (args: Args) => EventDisplay;
-  progress?: (args: Args, meta: { elapsedMs: number }) => EventDisplay;
-  end?: (args: Args, output: unknown, meta: { isError: boolean }) => EventDisplay;
+  /** Default title applied to every phase; per-phase hooks can override. */
+  title?: string;
+  start?: (args: Args) => Partial<EventDisplay>;
+  progress?: (args: Args, meta: { elapsedMs: number }) => Partial<EventDisplay>;
+  success?: (args: Args, output: unknown) => Partial<EventDisplay>;
+  error?: (args: Args, error: unknown) => Partial<EventDisplay>;
 }
 
 export interface ToolConfig<Args> {
@@ -1070,10 +1072,14 @@ describe("defaultDisplay", () => {
       runId: "r1",
       toolUseId: "t1",
       output: "result",
-      isError: false,
     };
     expect(defaultDisplay(ok).title).toBe("Completed tool");
-    const err: AgentEvent = { ...ok, isError: true };
+    const err: AgentEvent = {
+      type: "tool:end",
+      runId: "r1",
+      toolUseId: "t1",
+      error: "boom",
+    };
     expect(defaultDisplay(err).title).toBe("Tool failed");
   });
 
@@ -1159,7 +1165,15 @@ export type AgentEvent =
       runId: string;
       toolUseId: string;
       output: unknown;
-      isError: boolean;
+      metadata?: Record<string, unknown>;
+      display?: EventDisplay;
+    }
+  | {
+      type: "tool:end";
+      runId: string;
+      toolUseId: string;
+      error: string;
+      metadata?: Record<string, unknown>;
       display?: EventDisplay;
     }
   | {
@@ -1186,7 +1200,7 @@ export function defaultDisplay(event: AgentEvent): EventDisplay {
     case "tool:progress":
       return { title: `Still running (${Math.round(event.elapsedMs / 1000)}s)` };
     case "tool:end":
-      return { title: event.isError ? "Tool failed" : "Completed tool" };
+      return { title: "error" in event ? "Tool failed" : "Completed tool" };
     case "error":
       return { title: "Error", content: event.error.message };
   }
@@ -1349,13 +1363,12 @@ describe("runLoop", () => {
     const toolEnd = events.find((e) => e.type === "tool:end");
     expect(toolStart).toBeDefined();
     expect(toolEnd).toBeDefined();
-    if (toolEnd?.type === "tool:end") {
-      expect(toolEnd.isError).toBe(false);
+    if (toolEnd?.type === "tool:end" && !("error" in toolEnd)) {
       expect(toolEnd.output).toBe("ECHO:hi");
     }
   });
 
-  test("tool handler errors feed 'Error: ...' to model with isError=true and loop continues", async () => {
+  test("tool handler errors feed 'Error: ...' to model as tool:end with error and loop continues", async () => {
     const events: AgentEvent[] = [];
     const tool = new Tool({
       name: "crash",
@@ -1385,9 +1398,8 @@ describe("runLoop", () => {
     await runLoop(cfg, "go", {}, collect(events));
 
     const toolEnd = events.find((e) => e.type === "tool:end");
-    if (toolEnd?.type === "tool:end") {
-      expect(toolEnd.isError).toBe(true);
-      expect(String(toolEnd.output)).toContain("boom");
+    if (toolEnd?.type === "tool:end" && "error" in toolEnd) {
+      expect(toolEnd.error).toContain("boom");
     }
     const secondCall = client.complete.mock.calls[1][0];
     const toolMsg = (secondCall.messages as any[]).find((m) => m.role === "tool");
@@ -1845,10 +1857,7 @@ export async function runLoop(
 
       let result: ToolResult;
       if (!tool) {
-        result = {
-          content: `Error: tool "${toolName}" is not registered with this agent`,
-          isError: true,
-        };
+        result = { error: `tool "${toolName}" is not registered with this agent` };
       } else {
         try {
           const validated = tool.inputSchema.parse(parsedArgs);
@@ -1856,32 +1865,45 @@ export async function runLoop(
           result = normalizeToolResult(raw);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          result = { content: `Error: ${msg}`, isError: true };
+          result = { error: msg };
         }
       }
 
-      emit({
-        type: "tool:end",
-        runId,
-        toolUseId,
-        output: result.content,
-        isError: !!result.isError,
-        display: tool
-          ? safeDisplay(() =>
-              tool.display?.end?.(
-                parsedArgs as never,
-                result.content,
-                { isError: !!result.isError }
-              )
-            )
-          : undefined,
-      });
-
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: wireContent(result.content),
-      });
+      if ("error" in result) {
+        const err = result.error;
+        emit({
+          type: "tool:end",
+          runId,
+          toolUseId,
+          error: err,
+          metadata: result.metadata,
+          display: tool
+            ? safeDisplay(() => tool.display?.error?.(parsedArgs as never, err))
+            : undefined,
+        });
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: `Error: ${err}`,
+        });
+      } else {
+        const out = result.content;
+        emit({
+          type: "tool:end",
+          runId,
+          toolUseId,
+          output: out,
+          metadata: result.metadata,
+          display: tool
+            ? safeDisplay(() => tool.display?.success?.(parsedArgs as never, out))
+            : undefined,
+        });
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: wireContent(out),
+        });
+      }
     }
 
     // Loop continues for next turn.
@@ -2258,7 +2280,7 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
         );
         const end = events.find((e) => e.type === "agent:end");
         if (end?.type !== "agent:end") {
-          return { content: "", isError: true };
+          return { error: "subagent finished without agent:end event" };
         }
         return { content: end.result.text };
       },
@@ -2528,7 +2550,7 @@ describe("end-to-end", () => {
     expect(toolStart).toBeDefined();
     expect(toolEnd).toBeDefined();
     if (toolEnd?.type === "tool:end") {
-      expect(toolEnd.isError).toBe(false);
+      expect("error" in toolEnd).toBe(false);
     }
 
     // Second HTTP call should include the tool result fed back to the model.

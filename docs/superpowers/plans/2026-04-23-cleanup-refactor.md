@@ -1792,7 +1792,7 @@ git commit -m "test: centralize mock completion fixtures in tests/fixtures"
 
 ### Task 5.2: Fix spec drift in the original design doc
 
-**Context:** `docs/superpowers/specs/2026-04-23-agent-wrapper-design.md` predicts a three-file `types/` layout (actually one file: `types/Message.ts`) and a `ToolResult` with an `isError?: boolean` field (actually a discriminated union on `content | error`). The spec is historical; we correct it rather than refactor the code to match.
+**Context:** `docs/superpowers/specs/2026-04-23-agent-wrapper-design.md` predicts a three-file `types/` layout (actually one file: `types/Message.ts`) and an older single-interface `ToolResult` shape (actually a discriminated union on `content | error`). The spec is historical; we correct it rather than refactor the code to match.
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-04-23-agent-wrapper-design.md`
@@ -1801,7 +1801,7 @@ git commit -m "test: centralize mock completion fixtures in tests/fixtures"
 
 Read `docs/superpowers/specs/2026-04-23-agent-wrapper-design.md`. Locate:
 1. The section describing the `types/` folder layout (three files).
-2. The `ToolResult` type definition with `isError?: boolean`.
+2. The older `ToolResult` type definition (single interface with an error flag).
 3. The session-persistence section — check whether the system-message-never-persisted invariant is stated.
 
 - [ ] **Step 2: Edit the file**
@@ -1820,14 +1820,6 @@ Replace the `ToolResult` definition block with the actual one, sourced from `src
 export type ToolResult =
   | { content: unknown; metadata?: Record<string, unknown> }
   | { error: string; metadata?: Record<string, unknown> };
-```
-
-followed by a note:
-
-```
-**Note (2026-04-23):** The original spec proposed `{ isError?: boolean }`.
-Implementation replaced it with a discriminated union so TypeScript narrows
-automatically. Behavior is identical.
 ```
 
 If the system-prompt-never-persisted invariant is missing, add a bullet in the session section:
