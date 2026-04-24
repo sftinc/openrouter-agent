@@ -21,7 +21,7 @@ const calculator = new Tool({
 		if (!/^[0-9+\-*/().\s]+$/.test(expression)) {
 			throw new Error(`"${expression}" contains non-math characters`)
 		}
-		await randomDelay(2000, 4000)
+		await randomDelay(1000, 2000)
 		const result = Function(`"use strict"; return (${expression});`)() as number
 		return String(result)
 	},
@@ -115,7 +115,7 @@ setOpenRouterClient({
 	model: 'inception/mercury-2',
 	max_tokens: 2000,
 	temperature: 0.3,
-	reasoning: { effort: 'medium' },
+	reasoning: { effort: 'high' },
 	title: 'openrouter-agent demo',
 })
 
