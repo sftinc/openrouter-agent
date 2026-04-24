@@ -4,7 +4,6 @@ import type {
   LLMConfig,
   OpenRouterTool,
 } from "../openrouter/index.js";
-import { DEFAULT_MODEL } from "../openrouter/index.js";
 import type { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
@@ -204,7 +203,6 @@ export async function runLoop(
   const maxTurns = options.maxTurns ?? config.maxTurns;
   const signal = options.signal;
   const llm: LLMConfig = {
-    model: DEFAULT_MODEL,
     ...config.llm,
     ...(options.llm ?? {}),
   };

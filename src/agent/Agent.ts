@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Message, Result } from "../types/index.js";
-import type { LLMConfig } from "../openrouter/index.js";
-import { OpenRouterClient } from "../openrouter/index.js";
+import type { LLMConfig, OpenRouterClientOptions } from "../openrouter/index.js";
+import { OpenRouterClient, getDefaultOpenRouterClient } from "../openrouter/index.js";
 import { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
@@ -18,9 +18,18 @@ export interface AgentConfig<Input> {
   inputSchema?: z.ZodType<Input>;
   maxTurns?: number;
   sessionStore?: SessionStore;
+  /**
+   * OpenRouter client to use for this agent. Accepts either a pre-built
+   * `OpenRouterClient` instance or the same options object the client's
+   * constructor takes (one is built for you). When set, the client's
+   * configured defaults (model, max_tokens, etc.) and credentials are used —
+   * `apiKey`, `title`, and `referer` on this config are ignored. Share a
+   * single client instance across agents to share its defaults.
+   */
+  client?: OpenRouterClient | OpenRouterClientOptions;
   apiKey?: string;
-  referer?: string;
   title?: string;
+  referer?: string;
   display?: {
     start?: (input: string | Message[]) => EventDisplay;
     end?: (result: Result) => EventDisplay;
@@ -32,6 +41,12 @@ export type AgentRunOptions = Omit<RunLoopOptions, "parentRunId"> & {
 };
 
 const DEFAULT_INPUT_SCHEMA = z.object({ input: z.string() });
+
+function resolveClient<I>(config: AgentConfig<I>): OpenRouterClient | undefined {
+  const c = config.client;
+  if (!c) return undefined;
+  return c instanceof OpenRouterClient ? c : new OpenRouterClient(c);
+}
 
 export class Agent<Input = { input: string }> extends Tool<Input> {
   private readonly llm: LLMConfig;
@@ -84,11 +99,15 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
     this.agentTools = config.tools ?? [];
     this.maxTurns = config.maxTurns ?? 10;
     this.sessionStore = config.sessionStore ?? new InMemorySessionStore();
-    this.client = new OpenRouterClient({
-      apiKey: config.apiKey,
-      referer: config.referer,
-      title: config.title,
-    });
+    // Precedence: explicit config.client → module-level default → build from
+    // convenience fields (apiKey/title/referer, falling back to env).
+    this.client = resolveClient(config) ??
+      getDefaultOpenRouterClient() ??
+      new OpenRouterClient({
+        apiKey: config.apiKey,
+        title: config.title,
+        referer: config.referer,
+      });
     this.agentDisplay = config.display;
   }
 

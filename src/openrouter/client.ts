@@ -1,7 +1,9 @@
 import type {
   CompletionsRequest,
   CompletionsResponse,
+  LLMConfig,
 } from "./types.js";
+import { DEFAULT_MODEL } from "./types.js";
 
 /**
  * Thrown when OpenRouter returns a non-2xx response.
@@ -25,37 +27,49 @@ export class OpenRouterError extends Error {
   }
 }
 
-export interface OpenRouterClientOptions {
+/**
+ * Options for the OpenRouter client. Project-wide LLM defaults (model,
+ * max_tokens, temperature, etc.) live here via `LLMConfig` — everything on
+ * `LLMConfig` is part of the chat-completions request body. `apiKey`,
+ * `referer`, and `title` are transport-level fields sent as headers.
+ */
+export interface OpenRouterClientOptions extends LLMConfig {
   apiKey?: string;
-  referer?: string;
   title?: string;
-  baseUrl?: string;
-  fetch?: typeof fetch;
+  referer?: string;
 }
 
-const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
+const BASE_URL = "https://openrouter.ai/api/v1";
 
 export class OpenRouterClient {
   private readonly apiKey: string;
   private readonly referer?: string;
   private readonly title?: string;
-  private readonly baseUrl: string;
-  private readonly fetchImpl: typeof fetch;
+  private readonly defaults: LLMConfig;
 
   constructor(options: OpenRouterClientOptions) {
+    const { apiKey, title, referer, ...llmDefaults } = options;
     const envKey =
       typeof process !== "undefined" ? process.env?.OPENROUTER_API_KEY : undefined;
-    const apiKey = options.apiKey ?? envKey;
-    if (!apiKey) {
+    const key = apiKey ?? envKey;
+    if (!key) {
       throw new Error(
         "OPENROUTER_API_KEY is not set. Pass apiKey to the OpenRouterClient or set the env var."
       );
     }
-    this.apiKey = apiKey;
-    this.referer = options.referer;
-    this.title = options.title;
-    this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
-    this.fetchImpl = options.fetch ?? fetch;
+    this.apiKey = key;
+    this.title = title;
+    this.referer = referer;
+    this.defaults = llmDefaults;
+  }
+
+  /**
+   * Shallow-merged LLMConfig defaults configured on this client. Useful for
+   * callers (like the agent loop) that want to read what the client will send
+   * for fields the caller has not overridden.
+   */
+  get llmDefaults(): LLMConfig {
+    return { ...this.defaults };
   }
 
   async complete(
@@ -69,31 +83,36 @@ export class OpenRouterClient {
     if (this.referer) headers["HTTP-Referer"] = this.referer;
     if (this.title) headers["X-OpenRouter-Title"] = this.title;
 
-    const response = await this.fetchImpl(
-      `${this.baseUrl}/chat/completions`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ ...request, stream: false }),
-        signal,
-      }
-    );
+    // Precedence: DEFAULT_MODEL fallback < client.defaults < per-request fields.
+    const body = {
+      model: DEFAULT_MODEL,
+      ...this.defaults,
+      ...request,
+      stream: false as const,
+    };
+
+    const response = await fetch(`${BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
 
     if (!response.ok) {
-      const body = await this.safeParseJson(response);
+      const errBody = await this.safeParseJson(response);
       if (process.env.OPENROUTER_DEBUG) {
         // eslint-disable-next-line no-console
-        console.log("[openrouter] error response:", response.status, JSON.stringify(body));
+        console.log("[openrouter] error response:", response.status, JSON.stringify(errBody));
       }
       const message =
-        (body as { error?: { message?: string } } | undefined)?.error
+        (errBody as { error?: { message?: string } } | undefined)?.error
           ?.message ?? `HTTP ${response.status}`;
-      const metadata = (body as { error?: { metadata?: Record<string, unknown> } } | undefined)
+      const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)
         ?.error?.metadata;
       throw new OpenRouterError({
         code: response.status,
         message,
-        body,
+        body: errBody,
         metadata,
       });
     }
@@ -103,12 +122,12 @@ export class OpenRouterClient {
       const hasToolCalls = (json.choices ?? []).some(
         (c) => Array.isArray(c.message?.tool_calls) && c.message.tool_calls.length > 0
       );
-      const body = JSON.stringify(json, (key, value) => {
+      const debugBody = JSON.stringify(json, (key, value) => {
         if (key === "reasoning" || key === "reasoning_details") return undefined;
         return value;
       });
       // eslint-disable-next-line no-console
-      console.log("[openrouter] response:", hasToolCalls ? `\x1b[33m${body}\x1b[0m` : body);
+      console.log("[openrouter] response:", hasToolCalls ? `\x1b[33m${debugBody}\x1b[0m` : debugBody);
     }
     return json;
   }

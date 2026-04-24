@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { Agent, SessionBusyError, Tool } from '../../src/index.js'
+import { setDefaultOpenRouterClient, Tool, Agent, SessionBusyError } from '../../src/index.js'
 import type { AgentEvent } from '../../src/index.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -94,6 +94,21 @@ const webSearch = new Tool({
 })
 
 // ---------------------------------------------------------------------------
+// OpenRouter client
+//
+// Set the project-wide default once at startup. Every Agent constructed after
+// this call will use it automatically — no need to pass `client:` each time.
+// Per-agent or per-run `llm` overrides still layer on top.
+// ---------------------------------------------------------------------------
+
+setDefaultOpenRouterClient({
+	model: 'anthropic/claude-haiku-4.5',
+	max_tokens: 2000,
+	temperature: 0.3,
+	title: 'openrouter-agent demo',
+})
+
+// ---------------------------------------------------------------------------
 // Agent
 // ---------------------------------------------------------------------------
 
@@ -104,8 +119,6 @@ const agent = new Agent({
 		'You are a concise, helpful assistant. Use the available tools when they would give you better or more current information than guessing. Prefer calling a tool over speculating. When you answer, be direct. **You always speak like a pirate.**',
 	tools: [calculator, currentTime, webSearch],
 	maxTurns: 8,
-	referer: 'http://localhost:' + PORT,
-	title: 'openrouter-agent demo',
 })
 
 // ---------------------------------------------------------------------------

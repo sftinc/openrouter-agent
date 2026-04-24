@@ -55,12 +55,13 @@ describe('Agent', () => {
 		expect(events[events.length - 1]).toBe('agent:end')
 	})
 
-	test('default model is inception/mercury-2 when llm is omitted', async () => {
+	test('default model falls back to DEFAULT_MODEL when llm is omitted', async () => {
 		fetchSpy.mockResolvedValue(new Response(JSON.stringify(mockOkResponse('ok')), { status: 200 }))
 		const agent = new Agent({ name: 'a', description: 'd' })
 		await agent.run('hi')
 		const body = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)
-		expect(body.model).toBe('inception/mercury-2')
+		const { DEFAULT_MODEL } = await import('../../src/openrouter/index.js')
+		expect(body.model).toBe(DEFAULT_MODEL)
 	})
 
 	test('per-run llm shallow-merges over constructor llm', async () => {

@@ -1,19 +1,7 @@
-export { Agent } from "./agent/index.js";
-export type { AgentConfig, AgentRunOptions } from "./agent/index.js";
-export { Tool } from "./tool/index.js";
-export type { ToolConfig, ToolDisplayHooks, ToolDeps, ToolResult } from "./tool/index.js";
 export {
-  InMemorySessionStore,
-  SessionBusyError,
-} from "./session/index.js";
-export type { SessionStore } from "./session/index.js";
-export { defaultDisplay } from "./agent/index.js";
-export type {
-  AgentEvent,
-  EventDisplay,
-  EventEmit,
-} from "./agent/index.js";
-export {
+  setDefaultOpenRouterClient,
+  getDefaultOpenRouterClient,
+  clearDefaultOpenRouterClient,
   OpenRouterClient,
   OpenRouterError,
   DEFAULT_MODEL,
@@ -25,6 +13,21 @@ export type {
   CompletionsRequest,
   CompletionsResponse,
 } from "./openrouter/index.js";
+export { Tool } from "./tool/index.js";
+export type { ToolConfig, ToolDisplayHooks, ToolDeps, ToolResult } from "./tool/index.js";
+export { Agent } from "./agent/index.js";
+export type { AgentConfig, AgentRunOptions } from "./agent/index.js";
+export {
+  InMemorySessionStore,
+  SessionBusyError,
+} from "./session/index.js";
+export type { SessionStore } from "./session/index.js";
+export { defaultDisplay } from "./agent/index.js";
+export type {
+  AgentEvent,
+  EventDisplay,
+  EventEmit,
+} from "./agent/index.js";
 export type {
   Message,
   ContentPart,
