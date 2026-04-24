@@ -1,33 +1,29 @@
 import { OpenRouterClient, type OpenRouterClientOptions } from "./client.js";
 
 /**
- * Module-level default OpenRouter client. When set, any `Agent` constructed
- * without an explicit `client` will use this one. Set it once at app startup.
+ * The single, project-wide OpenRouter client. Set with `setOpenRouterClient()`
+ * at app startup; every `Agent` picks it up automatically. If never set,
+ * agents build one lazily from `OPENROUTER_API_KEY`.
  */
-let defaultClient: OpenRouterClient | undefined;
+let projectClient: OpenRouterClient | undefined;
 
 /**
- * Set the project-wide default OpenRouter client. Accepts either a pre-built
- * `OpenRouterClient` or the same options object the client's constructor
- * takes — when options are passed, a client is built internally so callers
- * don't need to import `OpenRouterClient` themselves. Returns the resulting
- * client for callers that want a reference to it.
+ * Register the project's OpenRouter client. Accepts either a pre-built
+ * `OpenRouterClient` or the same options object its constructor takes (one
+ * is built for you, so callers don't need to import `OpenRouterClient`).
+ * Returns the resulting client.
  */
-export function setDefaultOpenRouterClient(
+export function setOpenRouterClient(
   clientOrOptions: OpenRouterClient | OpenRouterClientOptions
 ): OpenRouterClient {
-  const client =
+  projectClient =
     clientOrOptions instanceof OpenRouterClient
       ? clientOrOptions
       : new OpenRouterClient(clientOrOptions);
-  defaultClient = client;
-  return client;
+  return projectClient;
 }
 
-export function getDefaultOpenRouterClient(): OpenRouterClient | undefined {
-  return defaultClient;
-}
-
-export function clearDefaultOpenRouterClient(): void {
-  defaultClient = undefined;
+/** Internal: returns the configured client, or undefined if none is set. */
+export function getOpenRouterClient(): OpenRouterClient | undefined {
+  return projectClient;
 }

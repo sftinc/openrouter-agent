@@ -4,7 +4,7 @@ A small, typed agent loop wrapper for [OpenRouter](https://openrouter.ai). Give 
 
 The public surface is deliberately small:
 
-- **`setDefaultOpenRouterClient`** — one-call setup for the project-wide OpenRouter client. Register it at app startup and every `Agent` uses it by default.
+- **`setOpenRouterClient`** — one-call setup for the project's OpenRouter client. Register it at app startup and every `Agent` uses it automatically.
 - **`OpenRouterClient`** — the HTTP client and the home for project-wide LLM defaults (model, max tokens, temperature, etc.) and OpenRouter credentials.
 - **`Tool`** — a name + description + Zod input schema + async `execute` function.
 - **`Agent`** — owns the run loop, the tool registry, and the session store. Uses an `OpenRouterClient` under the hood.
@@ -25,7 +25,7 @@ The `examples/demo/` server is the canonical reference for wiring this into a re
 5. [Core concepts](#core-concepts)
 6. [`Agent` — full reference](#agent--full-reference)
 7. [`Tool` — full reference](#tool--full-reference)
-8. [`OpenRouterClient` — standalone use](#openrouterclient--standalone-use)
+8. [`OpenRouterClient` — configuration and standalone use](#openrouterclient--configuration-and-standalone-use)
 9. [`ToolDeps` — what every tool receives](#tooldeps--what-every-tool-receives)
 10. [`AgentEvent` stream](#agentevent-stream)
 11. [Sessions and concurrency](#sessions-and-concurrency)
@@ -74,10 +74,10 @@ The client reads one environment variable:
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `OPENROUTER_API_KEY` | yes (or pass `apiKey`) | Your OpenRouter API key |
+| `OPENROUTER_API_KEY` | yes (or pass `apiKey` to `setOpenRouterClient`) | Your OpenRouter API key |
 | `OPENROUTER_DEBUG` | no | When set, logs every request/response and tool result to stdout |
 
-You can also pass `apiKey` directly in `new Agent({ apiKey: "..." })`.
+You can also pass `apiKey` directly to `setOpenRouterClient({ apiKey: "...", ... })` at app startup.
 
 The demo uses `tsx --env-file=.env` to load `.env`; for your own app, use whatever you normally use (`dotenv`, `--env-file`, k8s secrets, etc.).
 
@@ -87,8 +87,17 @@ The demo uses `tsx --env-file=.env` to load `.env`; for your own app, use whatev
 
 ```ts
 import { z } from "zod";
-import { Tool, Agent } from "@sftinc/openrouter-agent"; // for a minimal example; see the shared-client pattern below for real apps
+import { setOpenRouterClient, Tool, Agent } from "@sftinc/openrouter-agent";
 
+// 1. Register the project's OpenRouter client once at startup.
+setOpenRouterClient({
+  model: "anthropic/claude-haiku-4.5",
+  max_tokens: 2000,
+  temperature: 0.3,
+  title: "my-app",
+});
+
+// 2. Define tools.
 const calculator = new Tool({
   name: "calculator",
   description: "Evaluate a basic arithmetic expression. Supports + - * / ( ).",
@@ -103,6 +112,7 @@ const calculator = new Tool({
   },
 });
 
+// 3. Define agents. They pick up the project client automatically.
 const agent = new Agent({
   name: "demo-assistant",
   description: "A helpful assistant with a calculator.",
@@ -117,6 +127,8 @@ console.log(result.stopReason);  // "done" | "max_turns" | ...
 console.log(result.usage);       // Token + cost totals across the run
 ```
 
+**Order matters.** `setOpenRouterClient(...)` has to run before `new Agent(...)` — Agents read the project client at construction time. In bigger apps, put the `setOpenRouterClient` call in a `setup.ts` module and import it first from your app entry point.
+
 ### Streaming events
 
 ```ts
@@ -130,7 +142,7 @@ for await (const event of agent.runStream("what's the time in Tokyo?", { session
 }
 ```
 
-Both `run` and `runStream` accept the **same** options (`sessionId`, `signal`, `system`, `maxTurns`, `llm`).
+Both `run` and `runStream` accept the **same** options (`sessionId`, `signal`, `system`, `maxTurns`, `client`).
 
 ---
 
@@ -182,18 +194,16 @@ All fields except `name` and `description` are optional.
 |---|---|---|---|
 | `name` | `string` | — | Agent identifier. Also used as the tool name when this agent is nested as a subagent. |
 | `description` | `string` | — | One-line description. Shown to parent agents when used as a subagent. |
-| `llm` | `LLMConfig` | `{ model: DEFAULT_MODEL }` | Default model and sampling params. See [LLM configuration](#llm-configuration). |
+| `client` | `LLMConfig` | `{}` | Per-agent overrides for the OpenRouter client's request body (`model`, `max_tokens`, `temperature`, …). Shallow-merged over the project client's defaults. See [LLM configuration](#llm-configuration). |
 | `systemPrompt` | `string` | — | System prompt injected at the wire boundary every turn. Never stored in the session. |
 | `tools` | `Tool<any>[]` | `[]` | Tools exposed to the model on every turn. |
 | `inputSchema` | `z.ZodType<Input>` | `z.object({ input: z.string() })` | Used when this `Agent` is nested as a tool. The default accepts `{ input: "..." }`. |
 | `maxTurns` | `number` | `10` | Hard cap on assistant turns per run. When hit, `stopReason` is `"max_turns"`. |
 | `sessionStore` | `SessionStore` | `new InMemorySessionStore()` | Persistence for conversation history keyed by `sessionId`. |
-| `client` | `OpenRouterClient \| OpenRouterClientOptions` | module default, else built from `apiKey`/`title`/`referer` | Client for this agent. Accepts either a pre-built `OpenRouterClient` or the same options object the constructor takes (one is built for you). When set, `apiKey` / `title` / `referer` on this config are ignored. Falls back to the module default set by `setDefaultOpenRouterClient(...)` if one was registered. |
-| `apiKey` | `string` | `process.env.OPENROUTER_API_KEY` | OpenRouter API key. Ignored if `client` is set. |
-| `title` | `string` | — | Sent as `X-OpenRouter-Title`. Ignored if `client` is set. |
-| `referer` | `string` | — | Sent as `HTTP-Referer`. Ignored if `client` is set. |
 | `display.start` | `(input) => { title, content? }` | — | Optional UI hook for the `agent:start` event. |
 | `display.end` | `(result) => { title, content? }` | — | Optional UI hook for the `agent:end` event. |
+
+Auth and project-wide LLM defaults (`apiKey`, `title`, `referer`, `model`, `max_tokens`, …) live on the **project's OpenRouter client**, registered once with `setOpenRouterClient({...})`. `Agent.client` is strictly an overrides field — it cannot change the OpenRouter identity.
 
 ### `agent.run(input, options?) → Promise<Result>`
 
@@ -211,7 +221,7 @@ Runs the loop to completion and returns a single `Result` object.
 | `system` | `string` | Per-run system prompt override. Wins over both the input's system message and `systemPrompt`. |
 | `signal` | `AbortSignal` | Cancels the run. Fires `stopReason: "aborted"` and **does not** persist the session. |
 | `maxTurns` | `number` | Per-run override of the agent's `maxTurns`. |
-| `llm` | `LLMConfig` | Per-run override merged on top of the agent's default `llm`. |
+| `client` | `LLMConfig` | Per-run override merged on top of the agent's `client` overrides, which merge over the project client's defaults. |
 | `parentRunId` | `string` | Internal; set automatically when an Agent is used as a Tool. |
 
 ### `agent.runStream(input, options?) → AsyncIterable<AgentEvent>`
@@ -305,13 +315,31 @@ display: {
 
 ---
 
-## `OpenRouterClient` — standalone use
+## `OpenRouterClient` — configuration and standalone use
 
-The client is the home for **project-wide LLM defaults** (model, max tokens, temperature, any other `LLMConfig` field) and OpenRouter auth/attribution (`apiKey`, `referer`, `title`). Build one, share it across every `Agent` in the project, and overrides at the agent/run/tool level layer on top.
+The client is the home for **project-wide LLM defaults** (model, max tokens, temperature, any other `LLMConfig` field) and OpenRouter auth/attribution (`apiKey`, `title`, `referer`). You configure it **once** for the whole project with `setOpenRouterClient(...)`; every `Agent` uses it automatically. Per-agent / per-run / per-tool-call `client: LLMConfig` overrides layer on top — they can tweak wire-body fields but never change the OpenRouter identity.
+
+### `setOpenRouterClient(optionsOrInstance) → OpenRouterClient`
+
+Register the project's OpenRouter client. Accepts either an options object (the client is built for you — no need to import `OpenRouterClient`) or a pre-built `OpenRouterClient` instance. Returns the resulting client for callers that want a reference.
 
 ```ts
-import { OpenRouterClient, OpenRouterError, DEFAULT_MODEL } from "@sftinc/openrouter-agent";
+import { setOpenRouterClient, Agent } from "@sftinc/openrouter-agent";
+
+setOpenRouterClient({
+  model: "anthropic/claude-haiku-4.5",
+  max_tokens: 2000,
+  temperature: 0.3,
+  title: "my-app",
+});
+
+const assistant  = new Agent({ name: "assistant",  description: "...", tools: [...] });
+const summarizer = new Agent({ name: "summarizer", description: "...",
+  client: { temperature: 0 }, // per-agent override layered on the project client
+});
 ```
+
+Call `setOpenRouterClient` before constructing any `Agent` that should use it — Agents pick up the client at construction time. If none is registered, Agents fall back to building one from `OPENROUTER_API_KEY` in the environment.
 
 ### Constructor: `new OpenRouterClient(options)`
 
@@ -345,7 +373,7 @@ interface CompletionsRequest extends LLMConfig {
 }
 ```
 
-`LLMConfig` is the same config object the `Agent` accepts — see [LLM configuration](#llm-configuration) for every field.
+`LLMConfig` is the same shape that `AgentConfig.client` and run/tool-call overrides use — see [LLM configuration](#llm-configuration) for every field.
 
 ### `CompletionsResponse`
 
@@ -385,51 +413,6 @@ class OpenRouterError extends Error {
 ```
 
 Common codes worth handling: `401` (bad key), `402` (insufficient credits), `429` (rate limit), `503` (no capacity on the selected model).
-
-### Project-wide default (recommended)
-
-Set the client once at app startup; every `Agent` constructed afterwards picks it up automatically — no `client:` field needed on each agent:
-
-```ts
-import { setDefaultOpenRouterClient, Agent } from "@sftinc/openrouter-agent";
-
-setDefaultOpenRouterClient({
-  model: "anthropic/claude-haiku-4.5",
-  max_tokens: 2000,
-  temperature: 0.3,
-  title: "my-app",
-});
-
-const assistant  = new Agent({ name: "assistant",  description: "...", tools: [...] });
-const summarizer = new Agent({ name: "summarizer", description: "...",
-  llm: { temperature: 0 }, // per-agent override layered on the default client's config
-});
-```
-
-`setDefaultOpenRouterClient` accepts either an options object (shown above — the client is built for you, no need to import `OpenRouterClient`) or a pre-built `OpenRouterClient` instance. It returns the resulting client if you want a reference. Companion functions: `getDefaultOpenRouterClient()` (returns the current default or `undefined`) and `clearDefaultOpenRouterClient()` (useful in tests to reset between cases).
-
-### Explicit per-agent client
-
-If you'd rather avoid module-level state, pass the client directly to each agent. `client` accepts either a pre-built `OpenRouterClient` or the options object (built for you):
-
-```ts
-import { Agent } from "@sftinc/openrouter-agent";
-
-// Options form — no need to import OpenRouterClient
-const assistant = new Agent({
-  name: "assistant",
-  description: "...",
-  client: { model: "anthropic/claude-haiku-4.5", max_tokens: 2000, title: "my-app" },
-  tools: [...],
-});
-
-// Pre-built form — share one client across many agents
-import { OpenRouterClient } from "@sftinc/openrouter-agent";
-const openrouter = new OpenRouterClient({ model: "...", max_tokens: 2000, title: "my-app" });
-const summarizer = new Agent({ name: "summarizer", description: "...", client: openrouter, tools: [...] });
-```
-
-Precedence when `Agent` picks a client: `config.client` → module default → freshly built from `apiKey` / `title` / `referer` (or env). When any of these provides a client, the agent's `apiKey` / `title` / `referer` fields are ignored.
 
 ### Standalone example (no agent)
 
@@ -484,7 +467,7 @@ Every `execute` call gets a second `deps` argument with these fields:
 interface ToolDeps {
   complete: (
     messages: Message[],
-    options?: { llm?: LLMConfig; tools?: OpenRouterTool[] }
+    options?: { client?: LLMConfig; tools?: OpenRouterTool[] }
   ) => Promise<{ content: string | null; usage: Usage; tool_calls?: ToolCall[] }>;
   emit?:        (event: AgentEvent) => void;
   signal?:      AbortSignal;
@@ -496,7 +479,7 @@ interface ToolDeps {
 
 | Field | What you use it for |
 |---|---|
-| `complete` | Make an **inner** LLM call from within a tool, reusing the agent's configured OpenRouter client and API key. The `web_search` tool in the demo uses this to call OpenRouter's server-side web-search plugin. You can pass your own `tools` and `llm` overrides. |
+| `complete` | Make an **inner** LLM call from within a tool, reusing the agent's configured OpenRouter client and API key. The `web_search` tool in the demo uses this to call OpenRouter's server-side web-search plugin. You can pass your own `tools` and `client` overrides. |
 | `emit` | Push custom `AgentEvent`s into the stream (e.g. a `tool:progress` tick from a long-running tool). |
 | `signal` | Abort signal for the current run. Pass it to `fetch`, child processes, etc. so cancellation propagates. |
 | `runId` / `parentRunId` | Correlate emitted events with the run. Required when you implement your own subagent-style tool. |
@@ -591,12 +574,12 @@ This lock is **per-Agent-instance only** — it does not coordinate across proce
 Precedence at request time (lowest → highest):
 
 1. Hardcoded `DEFAULT_MODEL` (fallback so `model` is never empty)
-2. **`OpenRouterClient` defaults** — project-wide settings set on the client itself
-3. `new Agent({ llm })` — per-agent override
-4. `agent.run(..., { llm })` — per-run override
-5. `deps.complete(..., { llm })` inside a tool — per-tool-call override
+2. **Project client defaults** — whatever `setOpenRouterClient({...})` was called with
+3. `new Agent({ client })` — per-agent override (`LLMConfig`)
+4. `agent.run(..., { client })` — per-run override (`LLMConfig`)
+5. `deps.complete(..., { client })` inside a tool — per-tool-call override (`LLMConfig`)
 
-Each later source is shallow-merged over the previous. Putting `model`, `max_tokens`, and sampling knobs on the `OpenRouterClient` is the recommended place for project-wide defaults.
+Each later source is shallow-merged over the previous. Project-wide defaults for `model`, `max_tokens`, and sampling knobs belong on the project client (`setOpenRouterClient({...})`). The agent/run/tool `client` fields are strictly for overriding wire-body fields — they cannot change the OpenRouter identity (`apiKey`, `title`, `referer`).
 
 See `docs/openrouter/llm.md` in this repo for the full schema.
 

@@ -1,7 +1,5 @@
 export {
-  setDefaultOpenRouterClient,
-  getDefaultOpenRouterClient,
-  clearDefaultOpenRouterClient,
+  setOpenRouterClient,
   OpenRouterClient,
   OpenRouterError,
   DEFAULT_MODEL,

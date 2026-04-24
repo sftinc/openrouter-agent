@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { setDefaultOpenRouterClient, Tool, Agent, SessionBusyError } from '../../src/index.js'
+import { setOpenRouterClient, Tool, Agent, SessionBusyError } from '../../src/index.js'
 import type { AgentEvent } from '../../src/index.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -96,12 +96,12 @@ const webSearch = new Tool({
 // ---------------------------------------------------------------------------
 // OpenRouter client
 //
-// Set the project-wide default once at startup. Every Agent constructed after
-// this call will use it automatically — no need to pass `client:` each time.
-// Per-agent or per-run `llm` overrides still layer on top.
+// Register the project's OpenRouter client once at startup. Every Agent
+// constructed afterwards uses it automatically. Per-agent or per-run `client`
+// overrides (an `LLMConfig`) layer on top.
 // ---------------------------------------------------------------------------
 
-setDefaultOpenRouterClient({
+setOpenRouterClient({
 	model: 'anthropic/claude-haiku-4.5',
 	max_tokens: 2000,
 	temperature: 0.3,

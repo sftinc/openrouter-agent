@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Message, Result } from "../types/index.js";
-import type { LLMConfig, OpenRouterClientOptions } from "../openrouter/index.js";
-import { OpenRouterClient, getDefaultOpenRouterClient } from "../openrouter/index.js";
+import type { LLMConfig } from "../openrouter/index.js";
+import { OpenRouterClient, getOpenRouterClient } from "../openrouter/index.js";
 import { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
@@ -12,24 +12,17 @@ import { runLoop, type RunLoopConfig, type RunLoopOptions } from "./loop.js";
 export interface AgentConfig<Input> {
   name: string;
   description: string;
-  llm?: LLMConfig;
+  /**
+   * Per-agent overrides for the OpenRouter client's request body. Shallow-
+   * merged over the project-wide client's defaults set via
+   * `setOpenRouterClient(...)`. Every `LLMConfig` field is optional.
+   */
+  client?: LLMConfig;
   systemPrompt?: string;
   tools?: Tool<any>[];
   inputSchema?: z.ZodType<Input>;
   maxTurns?: number;
   sessionStore?: SessionStore;
-  /**
-   * OpenRouter client to use for this agent. Accepts either a pre-built
-   * `OpenRouterClient` instance or the same options object the client's
-   * constructor takes (one is built for you). When set, the client's
-   * configured defaults (model, max_tokens, etc.) and credentials are used —
-   * `apiKey`, `title`, and `referer` on this config are ignored. Share a
-   * single client instance across agents to share its defaults.
-   */
-  client?: OpenRouterClient | OpenRouterClientOptions;
-  apiKey?: string;
-  title?: string;
-  referer?: string;
   display?: {
     start?: (input: string | Message[]) => EventDisplay;
     end?: (result: Result) => EventDisplay;
@@ -42,19 +35,13 @@ export type AgentRunOptions = Omit<RunLoopOptions, "parentRunId"> & {
 
 const DEFAULT_INPUT_SCHEMA = z.object({ input: z.string() });
 
-function resolveClient<I>(config: AgentConfig<I>): OpenRouterClient | undefined {
-  const c = config.client;
-  if (!c) return undefined;
-  return c instanceof OpenRouterClient ? c : new OpenRouterClient(c);
-}
-
 export class Agent<Input = { input: string }> extends Tool<Input> {
-  private readonly llm: LLMConfig;
+  private readonly clientOverrides: LLMConfig;
   private readonly systemPrompt?: string;
   private readonly agentTools: Tool<any>[];
   private readonly maxTurns: number;
   private readonly sessionStore: SessionStore;
-  private readonly client: OpenRouterClient;
+  private readonly openrouter: OpenRouterClient;
   private readonly agentDisplay?: AgentConfig<Input>["display"];
   private readonly activeSessions = new Set<string>();
 
@@ -94,20 +81,14 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
       },
     });
 
-    this.llm = config.llm ?? {};
+    this.clientOverrides = config.client ?? {};
     this.systemPrompt = config.systemPrompt;
     this.agentTools = config.tools ?? [];
     this.maxTurns = config.maxTurns ?? 10;
     this.sessionStore = config.sessionStore ?? new InMemorySessionStore();
-    // Precedence: explicit config.client → module-level default → build from
-    // convenience fields (apiKey/title/referer, falling back to env).
-    this.client = resolveClient(config) ??
-      getDefaultOpenRouterClient() ??
-      new OpenRouterClient({
-        apiKey: config.apiKey,
-        title: config.title,
-        referer: config.referer,
-      });
+    // The global client is the only identity. If none was registered, fall back
+    // to a default one that picks up OPENROUTER_API_KEY from the environment.
+    this.openrouter = getOpenRouterClient() ?? new OpenRouterClient({});
     this.agentDisplay = config.display;
   }
 
@@ -191,11 +172,11 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
     return {
       agentName: this.name,
       systemPrompt: this.systemPrompt,
-      llm: this.llm,
+      client: this.clientOverrides,
       tools: this.agentTools,
       maxTurns: this.maxTurns,
       sessionStore: this.sessionStore,
-      client: this.client,
+      openrouter: this.openrouter,
       parentRunId,
       display: this.agentDisplay,
     };

@@ -55,7 +55,7 @@ describe('Agent', () => {
 		expect(events[events.length - 1]).toBe('agent:end')
 	})
 
-	test('default model falls back to DEFAULT_MODEL when llm is omitted', async () => {
+	test('default model falls back to DEFAULT_MODEL when client is omitted', async () => {
 		fetchSpy.mockResolvedValue(new Response(JSON.stringify(mockOkResponse('ok')), { status: 200 }))
 		const agent = new Agent({ name: 'a', description: 'd' })
 		await agent.run('hi')
@@ -64,14 +64,14 @@ describe('Agent', () => {
 		expect(body.model).toBe(DEFAULT_MODEL)
 	})
 
-	test('per-run llm shallow-merges over constructor llm', async () => {
+	test('per-run client shallow-merges over constructor client', async () => {
 		fetchSpy.mockResolvedValue(new Response(JSON.stringify(mockOkResponse('ok')), { status: 200 }))
 		const agent = new Agent({
 			name: 'a',
 			description: 'd',
-			llm: { model: 'anthropic/claude-haiku-4.5', temperature: 0.7 },
+			client: { model: 'anthropic/claude-haiku-4.5', temperature: 0.7 },
 		})
-		await agent.run('hi', { llm: { temperature: 0 } })
+		await agent.run('hi', { client: { temperature: 0 } })
 		const body = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)
 		expect(body.model).toBe('anthropic/claude-haiku-4.5')
 		expect(body.temperature).toBe(0)

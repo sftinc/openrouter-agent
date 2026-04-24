@@ -28,7 +28,7 @@ function mockResponse(partial: Partial<CompletionsResponse> & { message: { conte
 }
 
 function mkConfig(overrides: Partial<RunLoopConfig> = {}): RunLoopConfig {
-  const client = {
+  const openrouter = {
     complete: vi.fn().mockResolvedValue(
       mockResponse({ message: { content: "hello" } })
     ),
@@ -36,10 +36,10 @@ function mkConfig(overrides: Partial<RunLoopConfig> = {}): RunLoopConfig {
   return {
     agentName: "test-agent",
     systemPrompt: "you are helpful",
-    llm: { model: "anthropic/claude-haiku-4.5" },
+    client: { model: "anthropic/claude-haiku-4.5" },
     tools: [],
     maxTurns: 10,
-    client: client as any,
+    openrouter: openrouter as any,
     ...overrides,
   };
 }
@@ -95,7 +95,7 @@ describe("runLoop", () => {
           mockResponse({ id: "gen-2", message: { content: "final" } })
         ),
     };
-    const cfg = mkConfig({ tools: [tool], client: client as any });
+    const cfg = mkConfig({ tools: [tool], openrouter: client as any });
 
     await runLoop(cfg, "please echo", {}, collect(events));
 
@@ -141,7 +141,7 @@ describe("runLoop", () => {
         )
         .mockResolvedValueOnce(mockResponse({ message: { content: "done" } })),
     };
-    const cfg = mkConfig({ tools: [tool], client: client as any });
+    const cfg = mkConfig({ tools: [tool], openrouter: client as any });
 
     await runLoop(cfg, "hello there", {}, () => {});
 
@@ -183,7 +183,7 @@ describe("runLoop", () => {
           mockResponse({ message: { content: "recovered" } })
         ),
     };
-    const cfg = mkConfig({ tools: [tool], client: client as any });
+    const cfg = mkConfig({ tools: [tool], openrouter: client as any });
 
     await runLoop(cfg, "go", {}, collect(events));
 
@@ -221,7 +221,7 @@ describe("runLoop", () => {
         })
       ),
     };
-    const cfg = mkConfig({ tools: [tool], maxTurns: 2, client: client as any });
+    const cfg = mkConfig({ tools: [tool], maxTurns: 2, openrouter: client as any });
 
     await runLoop(cfg, "go", {}, collect(events));
 
@@ -252,7 +252,7 @@ describe("runLoop", () => {
         })
       ),
     };
-    const cfg = mkConfig({ tools: [tool], client: client as any });
+    const cfg = mkConfig({ tools: [tool], openrouter: client as any });
 
     await runLoop(cfg, "go", { signal: ac.signal }, collect(events));
 
@@ -288,7 +288,7 @@ describe("runLoop", () => {
       { role: "assistant", content: "earlier reply" },
     ]);
     const client = { complete: vi.fn().mockResolvedValue(mockResponse({ message: { content: "ok" } })) };
-    const cfg = mkConfig({ sessionStore: store, client: client as any });
+    const cfg = mkConfig({ sessionStore: store, openrouter: client as any });
 
     await runLoop(cfg, "followup", { sessionId: "s1" }, collect([]));
 
@@ -305,7 +305,7 @@ describe("runLoop", () => {
       { role: "assistant", content: "prev reply" },
     ]);
     const client = { complete: vi.fn().mockResolvedValue(mockResponse({ message: { content: "ok" } })) };
-    const cfg = mkConfig({ sessionStore: store, client: client as any });
+    const cfg = mkConfig({ sessionStore: store, openrouter: client as any });
 
     await runLoop(cfg, "hi", { sessionId: "s1", system: "new prompt" }, collect([]));
 
@@ -325,7 +325,7 @@ describe("runLoop", () => {
         Object.assign(new Error("rate limited"), { code: 429 })
       ),
     };
-    const cfg = mkConfig({ client: client as any });
+    const cfg = mkConfig({ openrouter: client as any });
 
     await runLoop(cfg, "hi", {}, collect(events));
 
@@ -357,7 +357,7 @@ describe("runLoop", () => {
         Object.assign(new Error("boom"), { code: 500 })
       ),
     };
-    const cfg = mkConfig({ sessionStore: store, client: client as any });
+    const cfg = mkConfig({ sessionStore: store, openrouter: client as any });
 
     await runLoop(cfg, "followup", { sessionId: "s1" }, collect([]));
 
@@ -390,7 +390,7 @@ describe("runLoop", () => {
           )
           .mockResolvedValueOnce(mockResponse({ id: "gen-2", message: { content: "final" } })),
       };
-      const cfg = mkConfig({ tools: [tool], client: client as any });
+      const cfg = mkConfig({ tools: [tool], openrouter: client as any });
       await runLoop(cfg, "go", {}, collect(events));
       return events;
     }
@@ -499,7 +499,7 @@ describe("runLoop", () => {
         throw Object.assign(new Error("aborted"), { name: "AbortError" });
       }),
     };
-    const cfg = mkConfig({ sessionStore: store, client: client as any });
+    const cfg = mkConfig({ sessionStore: store, openrouter: client as any });
 
     const events: AgentEvent[] = [];
     await runLoop(cfg, "followup", { sessionId: "s1", signal: ctrl.signal }, collect(events));

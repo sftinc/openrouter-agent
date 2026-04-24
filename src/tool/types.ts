@@ -26,7 +26,7 @@ export type ToolResult =
 export interface ToolDeps {
   complete: (
     messages: Message[],
-    options?: { llm?: LLMConfig; tools?: OpenRouterTool[] }
+    options?: { client?: LLMConfig; tools?: OpenRouterTool[] }
   ) => Promise<{ content: string | null; usage: Usage; tool_calls?: ToolCall[] }>;
   emit?: (event: AgentEvent) => void;
   signal?: AbortSignal;

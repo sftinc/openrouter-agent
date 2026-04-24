@@ -12,11 +12,11 @@ import type { AgentEvent, EventEmit } from "./events.js";
 export interface RunLoopConfig {
   agentName: string;
   systemPrompt?: string;
-  llm: LLMConfig;
+  client: LLMConfig;
   tools: Tool<any>[];
   maxTurns: number;
   sessionStore?: SessionStore;
-  client: {
+  openrouter: {
     complete: (
       request: { messages: Message[]; tools?: OpenRouterTool[] } & LLMConfig,
       signal?: AbortSignal
@@ -34,7 +34,7 @@ export interface RunLoopOptions {
   system?: string;
   signal?: AbortSignal;
   maxTurns?: number;
-  llm?: LLMConfig;
+  client?: LLMConfig;
   parentRunId?: string;
 }
 
@@ -202,9 +202,9 @@ export async function runLoop(
   const parentRunId = options.parentRunId ?? config.parentRunId;
   const maxTurns = options.maxTurns ?? config.maxTurns;
   const signal = options.signal;
-  const llm: LLMConfig = {
-    ...config.llm,
-    ...(options.llm ?? {}),
+  const overrides: LLMConfig = {
+    ...config.client,
+    ...(options.client ?? {}),
   };
 
   emit({
@@ -243,10 +243,10 @@ export async function runLoop(
 
   const deps: ToolDeps = {
     complete: async (msgs, opts) => {
-      const res = await config.client.complete(
+      const res = await config.openrouter.complete(
         {
-          ...llm,
-          ...(opts?.llm ?? {}),
+          ...overrides,
+          ...(opts?.client ?? {}),
           messages: msgs,
           tools: opts?.tools,
         },
@@ -274,8 +274,8 @@ export async function runLoop(
 
     let response: CompletionsResponse;
     try {
-      response = await config.client.complete(
-        { ...llm, messages: wireMessages(), tools: openrouterTools },
+      response = await config.openrouter.complete(
+        { ...overrides, messages: wireMessages(), tools: openrouterTools },
         signal
       );
     } catch (err) {
