@@ -1,0 +1,73 @@
+import { describe, test, expect } from "vitest";
+import { parseSseStream } from "../../src/openrouter/sse.js";
+
+function bytes(...chunks: string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(ctrl) {
+      for (const c of chunks) ctrl.enqueue(encoder.encode(c));
+      ctrl.close();
+    },
+  });
+}
+
+async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const v of it) out.push(v);
+  return out;
+}
+
+describe("parseSseStream", () => {
+  test("yields parsed JSON from single-line data frames", async () => {
+    const stream = bytes(
+      `data: {"a":1}\n\n`,
+      `data: {"a":2}\n\n`,
+      `data: [DONE]\n\n`
+    );
+    const out = await collect(parseSseStream(stream));
+    expect(out).toEqual([{ a: 1 }, { a: 2 }]);
+  });
+
+  test("skips comment lines starting with ':'", async () => {
+    const stream = bytes(
+      `: keepalive\n\n`,
+      `data: {"a":1}\n\n`,
+      `: another\n\n`,
+      `data: [DONE]\n\n`
+    );
+    expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
+  });
+
+  test("concatenates multi-line data fields with '\\n'", async () => {
+    const stream = bytes(`data: {"a":\ndata: 1}\n\n`, `data: [DONE]\n\n`);
+    expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
+  });
+
+  test("handles chunks that split mid-frame", async () => {
+    const stream = bytes(`data: {"a`, `":1}\n`, `\ndata: [DO`, `NE]\n\n`);
+    expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
+  });
+
+  test("handles \\r\\n line endings", async () => {
+    const stream = bytes(`data: {"a":1}\r\n\r\n`, `data: [DONE]\r\n\r\n`);
+    expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
+  });
+
+  test("stops at [DONE] and ignores trailing frames", async () => {
+    const stream = bytes(`data: {"a":1}\n\ndata: [DONE]\n\ndata: {"a":2}\n\n`);
+    expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
+  });
+
+  test("ends cleanly if stream closes without [DONE]", async () => {
+    const stream = bytes(`data: {"a":1}\n\n`);
+    expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
+  });
+
+  test("ignores non-data fields like event:/id:/retry:", async () => {
+    const stream = bytes(
+      `event: foo\nid: 1\ndata: {"a":1}\nretry: 5\n\n`,
+      `data: [DONE]\n\n`
+    );
+    expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
+  });
+});

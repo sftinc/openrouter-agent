@@ -15,3 +15,4 @@ export { DEFAULT_MODEL } from "./types.js";
 export { OpenRouterClient, OpenRouterError } from "./client.js";
 export type { OpenRouterClientOptions } from "./client.js";
 export { setOpenRouterClient, getOpenRouterClient } from "./default.js";
+export { parseSseStream } from "./sse.js";
