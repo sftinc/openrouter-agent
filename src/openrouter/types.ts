@@ -39,6 +39,12 @@ export interface LLMConfig {
 	route?: 'fallback'
 	provider?: Record<string, unknown>
 	plugins?: Array<{ id: string; [key: string]: unknown }>
+	/**
+	 * Optional debug flags. When `echo_upstream_body` is true, OpenRouter
+	 * echoes back the transformed upstream request body in the response for
+	 * inspection. See docs/openrouter/llm.md.
+	 */
+	debug?: { echo_upstream_body?: boolean }
 }
 
 /**
