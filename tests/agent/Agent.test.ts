@@ -3,11 +3,28 @@ import { z } from 'zod'
 import { Agent } from '../../src/agent/Agent.js'
 import { Tool } from '../../src/tool/Tool.js'
 import { SessionBusyError } from '../../src/session/index.js'
-import type { CompletionsResponse } from '../../src/openrouter/index.js'
-import { mockTextResponse } from '../fixtures/completions.js'
+import type { CompletionChunk } from '../../src/openrouter/index.js'
+import { mockCompletionChunks, mockChunkStream } from '../fixtures/completions.js'
 
-function mockOkResponse(content: string, id = 'gen-x'): CompletionsResponse {
-	return mockTextResponse(content, id, { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 })
+/** Encode a chunk array as an SSE Response (what OpenRouterClient.completeStream parses). */
+function sseOfChunks(chunks: CompletionChunk[]): Response {
+	const body =
+		chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') +
+		`data: [DONE]\n\n`
+	return new Response(body, {
+		status: 200,
+		headers: { 'Content-Type': 'text/event-stream' },
+	})
+}
+
+function mockOkSse(content: string, id = 'gen-x'): Response {
+	return sseOfChunks(
+		mockCompletionChunks({
+			id,
+			content,
+			usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+		})
+	)
 }
 
 describe('Agent', () => {
@@ -23,7 +40,7 @@ describe('Agent', () => {
 	})
 
 	test('run returns Result with text and usage', async () => {
-		fetchSpy.mockResolvedValue(new Response(JSON.stringify(mockOkResponse('hi there')), { status: 200 }))
+		fetchSpy.mockResolvedValue(mockOkSse('hi there'))
 		const agent = new Agent({ name: 'a', description: 'd' })
 		const result = await agent.run('hello')
 		expect(result.text).toBe('hi there')
@@ -31,11 +48,11 @@ describe('Agent', () => {
 		expect(result.usage.total_tokens).toBe(8)
 	})
 
-	test('runStream yields events in order', async () => {
-		fetchSpy.mockResolvedValue(new Response(JSON.stringify(mockOkResponse('ok')), { status: 200 }))
+	test('run yields events in order when iterated', async () => {
+		fetchSpy.mockResolvedValue(mockOkSse('ok'))
 		const agent = new Agent({ name: 'a', description: 'd' })
 		const events: string[] = []
-		for await (const ev of agent.runStream('hello')) {
+		for await (const ev of agent.run('hello')) {
 			events.push(ev.type)
 		}
 		expect(events[0]).toBe('agent:start')
@@ -44,7 +61,7 @@ describe('Agent', () => {
 	})
 
 	test('default model falls back to DEFAULT_MODEL when client is omitted', async () => {
-		fetchSpy.mockResolvedValue(new Response(JSON.stringify(mockOkResponse('ok')), { status: 200 }))
+		fetchSpy.mockResolvedValue(mockOkSse('ok'))
 		const agent = new Agent({ name: 'a', description: 'd' })
 		await agent.run('hi')
 		const body = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)
@@ -53,7 +70,7 @@ describe('Agent', () => {
 	})
 
 	test('per-run client shallow-merges over constructor client', async () => {
-		fetchSpy.mockResolvedValue(new Response(JSON.stringify(mockOkResponse('ok')), { status: 200 }))
+		fetchSpy.mockResolvedValue(mockOkSse('ok'))
 		const agent = new Agent({
 			name: 'a',
 			description: 'd',
@@ -69,36 +86,23 @@ describe('Agent', () => {
 		// First call: parent emits tool_calls for 'child'. Second call: child responds 'child-done'. Third: parent's final response.
 		fetchSpy
 			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
+				sseOfChunks(
+					mockCompletionChunks({
 						id: 'gen-1',
-						object: 'chat.completion',
-						created: 1,
-						model: 'anthropic/claude-haiku-4.5',
-						choices: [
+						finish_reason: 'tool_calls',
+						tool_calls: [
 							{
-								finish_reason: 'tool_calls',
-								native_finish_reason: 'tool_calls',
-								message: {
-									role: 'assistant',
-									content: null,
-									tool_calls: [
-										{
-											id: 'c1',
-											type: 'function',
-											function: { name: 'child', arguments: JSON.stringify({ input: 'do it' }) },
-										},
-									],
-								},
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'do it' }) },
 							},
 						],
 						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-					}),
-					{ status: 200 },
-				),
+					})
+				)
 			)
-			.mockResolvedValueOnce(new Response(JSON.stringify(mockOkResponse('child-done', 'gen-2')), { status: 200 }))
-			.mockResolvedValueOnce(new Response(JSON.stringify(mockOkResponse('parent-final', 'gen-3')), { status: 200 }))
+			.mockResolvedValueOnce(mockOkSse('child-done', 'gen-2'))
+			.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
 
 		const child = new Agent({ name: 'child', description: 'a subagent' })
 		const parent = new Agent({ name: 'parent', description: 'the parent', tools: [child] })
@@ -110,42 +114,29 @@ describe('Agent', () => {
 	test('subagent events bubble up with parentRunId', async () => {
 		fetchSpy
 			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
+				sseOfChunks(
+					mockCompletionChunks({
 						id: 'gen-1',
-						object: 'chat.completion',
-						created: 1,
-						model: 'anthropic/claude-haiku-4.5',
-						choices: [
+						finish_reason: 'tool_calls',
+						tool_calls: [
 							{
-								finish_reason: 'tool_calls',
-								native_finish_reason: 'tool_calls',
-								message: {
-									role: 'assistant',
-									content: null,
-									tool_calls: [
-										{
-											id: 'c1',
-											type: 'function',
-											function: { name: 'child', arguments: JSON.stringify({ input: 'hi' }) },
-										},
-									],
-								},
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'hi' }) },
 							},
 						],
 						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-					}),
-					{ status: 200 },
-				),
+					})
+				)
 			)
-			.mockResolvedValueOnce(new Response(JSON.stringify(mockOkResponse('child-done', 'gen-2')), { status: 200 }))
-			.mockResolvedValueOnce(new Response(JSON.stringify(mockOkResponse('final', 'gen-3')), { status: 200 }))
+			.mockResolvedValueOnce(mockOkSse('child-done', 'gen-2'))
+			.mockResolvedValueOnce(mockOkSse('final', 'gen-3'))
 
 		const child = new Agent({ name: 'child', description: 'sub' })
 		const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
 
 		const starts: { agentName: string; parentRunId?: string }[] = []
-		for await (const ev of parent.runStream('go')) {
+		for await (const ev of parent.run('go')) {
 			if (ev.type === 'agent:start') {
 				starts.push({ agentName: ev.agentName, parentRunId: ev.parentRunId })
 			}
@@ -160,35 +151,22 @@ describe('Agent', () => {
 	test('custom tool with Zod schema is validated before execute', async () => {
 		fetchSpy
 			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
+				sseOfChunks(
+					mockCompletionChunks({
 						id: 'gen-1',
-						object: 'chat.completion',
-						created: 1,
-						model: 'anthropic/claude-haiku-4.5',
-						choices: [
+						finish_reason: 'tool_calls',
+						tool_calls: [
 							{
-								finish_reason: 'tool_calls',
-								native_finish_reason: 'tool_calls',
-								message: {
-									role: 'assistant',
-									content: null,
-									tool_calls: [
-										{
-											id: 'c1',
-											type: 'function',
-											function: { name: 'weather', arguments: JSON.stringify({ city: 123 }) },
-										},
-									],
-								},
+								id: 'c1',
+								type: 'function',
+								function: { name: 'weather', arguments: JSON.stringify({ city: 123 }) },
 							},
 						],
 						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-					}),
-					{ status: 200 },
-				),
+					})
+				)
 			)
-			.mockResolvedValueOnce(new Response(JSON.stringify(mockOkResponse('recovered', 'gen-2')), { status: 200 }))
+			.mockResolvedValueOnce(mockOkSse('recovered', 'gen-2'))
 
 		const weather = new Tool({
 			name: 'weather',
@@ -214,7 +192,7 @@ describe('Agent', () => {
 		})
 		fetchSpy.mockImplementation(async () => {
 			await gate
-			return new Response(JSON.stringify(mockOkResponse('ok')), { status: 200 })
+			return mockOkSse('ok')
 		})
 
 		const agent = new Agent({ name: 'a', description: 'd' })
@@ -222,14 +200,15 @@ describe('Agent', () => {
 		// Give the first run a tick to acquire the lock before we start the second.
 		await Promise.resolve()
 
-		await expect(agent.run('two', { sessionId: 's1' })).rejects.toBeInstanceOf(SessionBusyError)
+		// SessionBusyError is thrown synchronously from run(), not wrapped in a promise.
+		expect(() => agent.run('two', { sessionId: 's1' })).toThrow(SessionBusyError)
 
 		release!()
 		await first
 	})
 
 	test('lock releases after a successful run so the same session can run again', async () => {
-		fetchSpy.mockImplementation(async () => new Response(JSON.stringify(mockOkResponse('ok')), { status: 200 }))
+		fetchSpy.mockImplementation(async () => mockOkSse('ok'))
 		const agent = new Agent({ name: 'a', description: 'd' })
 		await agent.run('one', { sessionId: 's1' })
 		// Second run on the same session should succeed, not throw.
@@ -244,33 +223,34 @@ describe('Agent', () => {
 		expect(first.stopReason).toBe('error')
 
 		// After the error, the lock should be free again.
-		fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(mockOkResponse('recovered')), { status: 200 }))
+		fetchSpy.mockResolvedValueOnce(mockOkSse('recovered'))
 		const second = await agent.run('retry', { sessionId: 's1' })
 		expect(second.stopReason).toBe('done')
 		expect(second.text).toBe('recovered')
 	})
 
-	test('runStream surfaces SessionBusyError when session is already busy', async () => {
+	test('run throws SessionBusyError synchronously when session is already busy', async () => {
 		let release: () => void
 		const gate = new Promise<void>((r) => {
 			release = r
 		})
 		fetchSpy.mockImplementation(async () => {
 			await gate
-			return new Response(JSON.stringify(mockOkResponse('ok')), { status: 200 })
+			return mockOkSse('ok')
 		})
 
 		const agent = new Agent({ name: 'a', description: 'd' })
-		// Kick off a blocking stream; drive it by pulling events in the background.
-		const firstStreamIter = agent.runStream('one', { sessionId: 's1' })[Symbol.asyncIterator]()
+		// Kick off a blocking run; start iterating it in the background.
+		const firstRun = agent.run('one', { sessionId: 's1' })
+		const firstStreamIter = firstRun[Symbol.asyncIterator]()
 		const firstStart = firstStreamIter.next()
 		await Promise.resolve()
 
-		const secondIter = agent.runStream('two', { sessionId: 's1' })[Symbol.asyncIterator]()
-		await expect(secondIter.next()).rejects.toBeInstanceOf(SessionBusyError)
+		// SessionBusyError must be thrown synchronously from run(), not wrapped.
+		expect(() => agent.run('two', { sessionId: 's1' })).toThrow(SessionBusyError)
 
 		release!()
-		// Drain the first stream so the lock releases cleanly.
+		// Drain the first run so the lock releases cleanly.
 		await firstStart
 		while (!(await firstStreamIter.next()).done) {
 			/* drain */

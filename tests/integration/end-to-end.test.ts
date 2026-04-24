@@ -2,14 +2,45 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
 import { Agent, Tool } from "../../src/index.js";
 import type { AgentEvent } from "../../src/index.js";
-import { mockTextResponse, mockToolCallResponse } from "../fixtures/completions.js";
+import type { CompletionChunk } from "../../src/openrouter/index.js";
+import { mockCompletionChunks } from "../fixtures/completions.js";
 
-function completionWithToolCall(id: string, name: string, args: Record<string, unknown>) {
-  return mockToolCallResponse(name, args, { id, callId: "tc-" + id });
+/** Encode a chunk array as an SSE Response (what OpenRouterClient.completeStream parses). */
+function sseOfChunks(chunks: CompletionChunk[]): Response {
+  const body =
+    chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") +
+    `data: [DONE]\n\n`;
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
 }
 
-function completionText(id: string, text: string) {
-  return mockTextResponse(text, id, { prompt_tokens: 12, completion_tokens: 6, total_tokens: 18 });
+function completionWithToolCall(id: string, name: string, args: Record<string, unknown>): Response {
+  return sseOfChunks(
+    mockCompletionChunks({
+      id,
+      finish_reason: "tool_calls",
+      tool_calls: [
+        {
+          id: "tc-" + id,
+          type: "function",
+          function: { name, arguments: JSON.stringify(args) },
+        },
+      ],
+      // No explicit usage → DEFAULT_USAGE (10/5/15) — matches original mockToolCallResponse behaviour.
+    })
+  );
+}
+
+function completionText(id: string, text: string): Response {
+  return sseOfChunks(
+    mockCompletionChunks({
+      id,
+      content: text,
+      usage: { prompt_tokens: 12, completion_tokens: 6, total_tokens: 18 },
+    })
+  );
 }
 
 describe("end-to-end", () => {
@@ -26,14 +57,8 @@ describe("end-to-end", () => {
 
   test("Agent invokes a custom Tool, feeds result back, and returns synthesis", async () => {
     fetchSpy
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(completionWithToolCall("gen-1", "lookup", { key: "X" })), {
-          status: 200,
-        })
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(completionText("gen-2", "value for X is 42")), { status: 200 })
-      );
+      .mockResolvedValueOnce(completionWithToolCall("gen-1", "lookup", { key: "X" }))
+      .mockResolvedValueOnce(completionText("gen-2", "value for X is 42"));
 
     const lookup = new Tool({
       name: "lookup",
@@ -50,7 +75,7 @@ describe("end-to-end", () => {
     });
 
     const events: AgentEvent[] = [];
-    for await (const ev of agent.runStream("what is X?")) {
+    for await (const ev of agent.run("what is X?")) {
       events.push(ev);
     }
 

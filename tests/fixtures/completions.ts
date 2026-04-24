@@ -1,4 +1,4 @@
-import type { CompletionsResponse } from "../../src/openrouter/index.js";
+import type { CompletionsResponse, CompletionChunk, ToolCallDelta } from "../../src/openrouter/index.js";
 import type { ToolCall, Usage } from "../../src/types/index.js";
 
 const DEFAULT_USAGE: Usage = {
@@ -71,4 +71,78 @@ export function mockToolCallResponse(
       },
     ],
   });
+}
+
+/**
+ * Build a minimal list of `CompletionChunk`s for tests. Mirrors
+ * `mockCompletionsResponse` but in streaming shape.
+ */
+export function mockCompletionChunks(
+  partial: {
+    id?: string;
+    model?: string;
+    content?: string | null;
+    tool_calls?: ToolCall[];
+    finish_reason?: string;
+    usage?: Usage;
+  } = {}
+): CompletionChunk[] {
+  const id = partial.id ?? "gen-1";
+  const model = partial.model ?? "anthropic/claude-haiku-4.5";
+  const usage = partial.usage ?? DEFAULT_USAGE;
+  const chunks: CompletionChunk[] = [];
+  if (typeof partial.content === "string" && partial.content.length > 0) {
+    chunks.push({
+      id,
+      object: "chat.completion.chunk",
+      created: 1704067200,
+      model,
+      choices: [
+        {
+          finish_reason: null,
+          native_finish_reason: null,
+          delta: { content: partial.content },
+        },
+      ],
+    });
+  }
+  const toolDeltas: ToolCallDelta[] | undefined = partial.tool_calls?.map(
+    (tc, i) => ({
+      index: i,
+      id: tc.id,
+      type: tc.type,
+      function: { name: tc.function.name, arguments: tc.function.arguments },
+    })
+  );
+  chunks.push({
+    id,
+    object: "chat.completion.chunk",
+    created: 1704067200,
+    model,
+    choices: [
+      {
+        finish_reason: partial.finish_reason ?? "stop",
+        native_finish_reason: partial.finish_reason ?? "stop",
+        delta: { content: null, tool_calls: toolDeltas },
+      },
+    ],
+  });
+  chunks.push({
+    id,
+    object: "chat.completion.chunk",
+    created: 1704067200,
+    model,
+    choices: [],
+    usage,
+  });
+  return chunks;
+}
+
+/** Async iterable wrapper around a pre-built chunk array. */
+export function mockChunkStream(
+  chunks: CompletionChunk[]
+): AsyncIterable<CompletionChunk> {
+  return (async function* () {
+    for (const c of chunks) yield c;
+  })();
 }
