@@ -199,7 +199,49 @@ export interface CompletionsResponse {
 export interface CompletionsRequest extends LLMConfig {
 	messages: Message[]
 	tools?: OpenRouterTool[]
-	stream?: false
+	stream?: boolean
+}
+
+/**
+ * Incremental tool-call piece from a streaming response. `index` identifies
+ * which tool call this piece applies to (tool calls are streamed in parallel
+ * keyed by index). `id` and `function.name` typically appear only on the
+ * first chunk; `function.arguments` is a JSON string fragment to concatenate.
+ */
+export interface ToolCallDelta {
+	index: number
+	id?: string
+	type?: 'function'
+	function?: {
+		name?: string
+		arguments?: string
+	}
+}
+
+/** Streaming choice shape from OpenRouter. See docs/openrouter/llm.md. */
+export interface StreamingChoice {
+	finish_reason: string | null
+	native_finish_reason: string | null
+	delta: {
+		content: string | null
+		role?: string
+		tool_calls?: ToolCallDelta[]
+	}
+	error?: ErrorResponse
+}
+
+/**
+ * A single SSE chunk parsed from /chat/completions when `stream: true`.
+ * The final chunk before `[DONE]` carries `usage` with an empty `choices`
+ * array; all other chunks carry one streaming choice.
+ */
+export interface CompletionChunk {
+	id: string
+	object: 'chat.completion.chunk'
+	created: number
+	model: string
+	choices: StreamingChoice[]
+	usage?: Usage
 }
 
 export const DEFAULT_MODEL = 'anthropic/claude-haiku-4.5'
