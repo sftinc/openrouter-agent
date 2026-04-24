@@ -53,13 +53,15 @@ src/
     index.ts
   types/
     Message.ts
-    Usage.ts
-    Result.ts
     index.ts
   index.ts              // top-level barrel re-exports the public surface
 ```
 
 Every subfolder exposes its public surface via its `index.ts`. Consumers import from the folder (`import { Agent } from "./agent"`), never from a specific file. The top-level `src/index.ts` re-exports everything external consumers need.
+
+**Note (2026-04-23):** Implementation consolidated `Message`, `ContentPart`,
+`ToolCall`, `Usage`, and `Result` into a single `src/types/Message.ts` file.
+The folder structure still exposes them via `src/types/index.ts`.
 
 ## Types
 
@@ -87,12 +89,14 @@ type ToolCall = {
 ### `ToolResult`
 
 ```ts
-type ToolResult = {
-  content: unknown;                          // model-visible payload
-  isError?: boolean;                         // UI / event only; not sent to the model
-  metadata?: Record<string, unknown>;        // internal (logs, UI), not sent to the model
-};
+export type ToolResult =
+  | { content: unknown; metadata?: Record<string, unknown> }
+  | { error: string; metadata?: Record<string, unknown> };
 ```
+
+**Note (2026-04-23):** The original spec proposed `{ isError?: boolean }`.
+Implementation replaced it with a discriminated union so TypeScript narrows
+automatically. Behavior is identical.
 
 Handler return value is `string | ToolResult`. A plain string is sugar for `{ content: string }`. Before sending to OpenRouter, `content` is serialized: strings as-is, non-strings via `JSON.stringify`.
 
@@ -384,6 +388,10 @@ interface SessionStore {
 - No `sessionId` passed → run is stateless, no store interaction.
 - With `sessionId`: on entry, `get(sessionId)` seeds `messages`; on exit, `set(sessionId, messages)` persists the updated history.
 - Users replace the default for Redis / Postgres / etc. by implementing the interface.
+- **System messages are never persisted.** The agent loop strips `role: "system"`
+  before calling `SessionStore.set`. The system prompt is agent configuration,
+  not conversation state. Enforced in `src/agent/loop.ts` (session-load filter)
+  and `runLoop` (pre-persist filter).
 
 ## Dependencies
 
