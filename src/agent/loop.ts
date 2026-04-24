@@ -8,7 +8,7 @@ import type { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
 import type { AgentEvent, EventEmit } from "./events.js";
-import { generateId } from "../lib/index.js";
+import { generateId, mergeNumericRecords } from "../lib/index.js";
 
 export interface RunLoopConfig {
   agentName: string;
@@ -58,41 +58,12 @@ function addUsage(a: Usage, b: Usage | undefined): Usage {
     completion_tokens: a.completion_tokens + b.completion_tokens,
     total_tokens: a.total_tokens + b.total_tokens,
     cost: (a.cost ?? 0) + (b.cost ?? 0) || undefined,
-    prompt_tokens_details: mergeSubUsage(a.prompt_tokens_details, b.prompt_tokens_details),
-    completion_tokens_details: mergeSubUsage(a.completion_tokens_details, b.completion_tokens_details),
-    server_tool_use: mergeServerToolUse(a.server_tool_use, b.server_tool_use),
+    prompt_tokens_details: mergeNumericRecords(a.prompt_tokens_details, b.prompt_tokens_details),
+    completion_tokens_details: mergeNumericRecords(a.completion_tokens_details, b.completion_tokens_details),
+    server_tool_use: mergeNumericRecords(a.server_tool_use, b.server_tool_use),
   };
 }
 
-function mergeSubUsage<T extends Record<string, number | undefined>>(
-  a: T | undefined,
-  b: T | undefined
-): T | undefined {
-  if (!a && !b) return undefined;
-  const out: Record<string, number> = {};
-  for (const src of [a, b]) {
-    if (!src) continue;
-    for (const [k, v] of Object.entries(src)) {
-      if (typeof v === "number") out[k] = (out[k] ?? 0) + v;
-    }
-  }
-  return out as T;
-}
-
-function mergeServerToolUse(
-  a: Usage["server_tool_use"],
-  b: Usage["server_tool_use"]
-): Usage["server_tool_use"] {
-  if (!a && !b) return undefined;
-  const out: Record<string, number> = {};
-  for (const src of [a, b]) {
-    if (!src) continue;
-    for (const [k, v] of Object.entries(src)) {
-      if (typeof v === "number") out[k] = (out[k] ?? 0) + v;
-    }
-  }
-  return out as Usage["server_tool_use"];
-}
 
 function normalizeToolResult(raw: unknown): ToolResult {
   if (typeof raw === "string") return { content: raw };
