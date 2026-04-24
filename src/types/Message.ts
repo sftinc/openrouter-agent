@@ -56,3 +56,18 @@ export interface Result {
   generationIds: string[];
   error?: { code?: number; message: string; metadata?: Record<string, unknown> };
 }
+
+/** All valid `Message.role` values, exported for runtime iteration/validation. */
+export const MESSAGE_ROLES = ["system", "user", "assistant", "tool"] as const;
+export type MessageRole = typeof MESSAGE_ROLES[number];
+
+/** All valid `Result.stopReason` values, exported for runtime iteration/validation. */
+export const STOP_REASONS = [
+  "done",
+  "max_turns",
+  "aborted",
+  "length",
+  "content_filter",
+  "error",
+] as const;
+export type StopReason = typeof STOP_REASONS[number];
