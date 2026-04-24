@@ -10,11 +10,16 @@ export interface EventDisplay {
  * `Agent.runStream()` and display hooks. Discriminate on `event.type`.
  *
  * **Lifecycle order** (per run):
- *   `agent:start` → (`message` | `tool:start` + `tool:progress*` + `tool:end`)* → (`error`)? → `agent:end`
+ *   `agent:start` → (`message:delta*` + `message` | `tool:start` + `tool:progress*` + `tool:end`)* → (`error`)? → `agent:end`
  *
  * **Events:**
  * - `agent:start` — fires once, immediately after the runId is assigned,
  *   before any session load or LLM call.
+ * - `message:delta` — fires zero or more times per assistant turn as text
+ *   tokens arrive from the streaming transport. Each delta carries only the
+ *   new text since the previous delta, not the accumulated buffer. Does not
+ *   fire for tool-call arg deltas (those are only exposed via the final
+ *   `message` event's `tool_calls`).
  * - `message` — fires once per assistant message (including tool-call
  *   messages). Does NOT fire for user or tool-role messages.
  * - `tool:start` — fires when a tool invocation begins. `input` is the
@@ -40,6 +45,11 @@ export type AgentEvent =
       runId: string;
       result: Result;
       display?: EventDisplay;
+    }
+  | {
+      type: "message:delta";
+      runId: string;
+      text: string;
     }
   | {
       type: "message";
@@ -101,6 +111,8 @@ export function defaultDisplay(event: AgentEvent): EventDisplay {
       return { title: `Starting ${event.agentName}` };
     case "agent:end":
       return { title: "Done" };
+    case "message:delta":
+      return { title: "Message delta" };
     case "message":
       return { title: "Message" };
     case "tool:start":
