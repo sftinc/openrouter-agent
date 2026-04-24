@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SessionBusyError } from '../../src/index.js'
-import type { AgentEvent } from '../../src/index.js'
+import type { AgentEvent, AgentRun } from '../../src/index.js'
 import { agent, sessionStore } from './agent.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -53,14 +53,11 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse): Pro
 		if (!res.writableEnded) abort.abort()
 	})
 
-	const stream = agent.runStream(message, { sessionId, signal: abort.signal })
-	const iterator = stream[Symbol.asyncIterator]()
-
-	// Pull the first event before writing status headers so we can surface a
-	// SessionBusyError as HTTP 409 instead of an in-stream error.
-	let first: IteratorResult<AgentEvent>
+	// SessionBusyError is thrown synchronously from agent.run() so we can
+	// surface it as HTTP 409 without peeking the iterator.
+	let run: AgentRun
 	try {
-		first = await iterator.next()
+		run = agent.run(message, { sessionId, signal: abort.signal })
 	} catch (err) {
 		if (err instanceof SessionBusyError) {
 			res.writeHead(409, { 'Content-Type': 'application/json' })
@@ -85,12 +82,7 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse): Pro
 	}
 
 	try {
-		if (!first.done) send(first.value)
-		while (true) {
-			const next = await iterator.next()
-			if (next.done) break
-			send(next.value)
-		}
+		for await (const ev of run) send(ev)
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err)
 		res.write(JSON.stringify({ type: 'error', runId: 'server', error: { message: msg } }) + '\n')
