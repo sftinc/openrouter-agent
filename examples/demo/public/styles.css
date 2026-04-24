@@ -33,10 +33,31 @@ body {
   height: 100vh;
 }
 
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
 header h1 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 18px;
   font-weight: 600;
+}
+#new-chat {
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+#new-chat:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .subtitle {
   margin: 0;

@@ -2,6 +2,7 @@ const messagesEl = document.getElementById("messages");
 const form = document.getElementById("composer");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send");
+const newChatBtn = document.getElementById("new-chat");
 
 const SESSION_KEY = "openrouter-agent-demo-session";
 let sessionId = localStorage.getItem(SESSION_KEY);
@@ -144,6 +145,7 @@ async function runRequest(message) {
   function handleEvent(event) {
     switch (event.type) {
       case "tool:start": {
+        assistantEl = null;
         const d = displayOf(event);
         const card = addToolCard(
           event.toolName,
@@ -202,6 +204,14 @@ async function runRequest(message) {
     }
   }
 }
+
+newChatBtn.addEventListener("click", () => {
+  sessionId = crypto.randomUUID();
+  localStorage.setItem(SESSION_KEY, sessionId);
+  messagesEl.replaceChildren();
+  input.value = "";
+  input.focus();
+});
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();

@@ -48,12 +48,12 @@ const currentTime = new Tool({
 		timezone: z.string().optional().describe('IANA timezone name; omit for UTC ISO timestamp'),
 	}),
 	execute: async ({ timezone }) => {
-		await randomDelay(2000, 4000)
+		await randomDelay(1000, 2000)
 		const now = new Date()
-		if (!timezone) return now.toISOString()
+
 		try {
 			return now.toLocaleString('en-US', {
-				timeZone: timezone,
+				timeZone: timezone || 'UTC',
 				dateStyle: 'full',
 				timeStyle: 'long',
 			})
@@ -63,6 +63,10 @@ const currentTime = new Tool({
 	},
 	display: {
 		title: (args) => (args.timezone ? `Looking up time in ${args.timezone}` : `Getting current time`),
+		success: (_args, output) => ({
+			title: `Time found for ${_args.timezone || 'Greenwich Mean Time'}`,
+			content: output,
+		}),
 	},
 })
 
@@ -79,17 +83,32 @@ const webSearch = new Tool({
 				{
 					role: 'system',
 					content:
-						'You are a web research assistant. Use the openrouter:web_search tool to find current, factual information and return a concise answer with the key facts, and any source Website Titles / URLs in markdown format.',
+						'You must use the openrouter:web_search tool to find current, factual information related to the query. Only respond with the result information and no additional text.',
 				},
 				{ role: 'user', content: query },
 			],
-			{ tools: [{ type: 'openrouter:web_search', engine: 'exa', max_results: 5 } as never] },
+			{
+				tools: [{ type: 'openrouter:web_search', engine: 'exa', max_results: 5 } as never],
+			},
 		)
-		return res.content ?? '(no results)'
+		const sources =
+			res.annotations
+				?.filter((a) => a.type === 'url_citation')
+				.map((a) => ({ title: a.url_citation.title, url: a.url_citation.url })) ?? []
+		return { content: res.content ?? '(no results)', metadata: { sources } }
 	},
 	display: {
 		title: 'Searching the web',
 		start: (args) => ({ content: args.query }),
+		success: (_args, _output, metadata) => {
+			const sources = (metadata?.sources ?? []) as { title: string; url: string }[]
+			if (!sources.length) return { title: 'Search complete' }
+			const list = sources.map((s) => `• ${s.title} — ${s.url}`).join('\n')
+			return {
+				title: `Searched ${sources.length} source${sources.length === 1 ? '' : 's'}`,
+				content: list,
+			}
+		},
 	},
 })
 
@@ -102,9 +121,9 @@ const webSearch = new Tool({
 // ---------------------------------------------------------------------------
 
 setOpenRouterClient({
-	model: 'anthropic/claude-haiku-4.5',
 	max_tokens: 2000,
 	temperature: 0.3,
+	reasoning: { effort: 'medium' },
 	title: 'openrouter-agent demo',
 })
 
