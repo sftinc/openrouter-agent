@@ -96,6 +96,7 @@ async function runRequest(message) {
 
   const toolCards = new Map();
   let assistantEl = null;
+  let assistantBuf = "";
   let errorShown = false;
 
   const showError = (msg) => {
@@ -151,7 +152,10 @@ async function runRequest(message) {
   function handleEvent(event) {
     switch (event.type) {
       case "tool:start": {
+        // A tool call interrupts the current assistant bubble; next text
+        // belongs to a fresh bubble for the post-tool turn.
         assistantEl = null;
+        assistantBuf = "";
         const d = displayOf(event);
         const card = addToolCard(
           event.toolName,
@@ -174,16 +178,34 @@ async function runRequest(message) {
         );
         break;
       }
+      case "message:delta": {
+        if (typeof event.text !== "string" || event.text.length === 0) break;
+        if (!assistantEl) {
+          assistantEl = addAssistantMessage();
+          assistantBuf = "";
+        }
+        assistantBuf += event.text;
+        renderMarkdown(assistantEl, assistantBuf);
+        scroll();
+        break;
+      }
       case "message": {
+        // The full assistant message. If we rendered deltas, the bubble is
+        // already up-to-date — just reset state for the next turn. If for
+        // some reason no deltas arrived (e.g. non-streaming fallback), fall
+        // through to render the whole content here.
         if (
           event.message?.role === "assistant" &&
           typeof event.message.content === "string" &&
-          event.message.content.length > 0
+          event.message.content.length > 0 &&
+          assistantBuf.length === 0
         ) {
           if (!assistantEl) assistantEl = addAssistantMessage();
           renderMarkdown(assistantEl, event.message.content);
           scroll();
         }
+        assistantEl = null;
+        assistantBuf = "";
         break;
       }
       case "agent:end": {
