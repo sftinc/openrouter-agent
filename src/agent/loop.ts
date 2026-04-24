@@ -8,7 +8,7 @@ import type { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
 import type { AgentEvent, EventEmit } from "./events.js";
-import { generateId, mergeNumericRecords } from "../lib/index.js";
+import { generateId, mergeNumericRecords, buildToolResultMessage, buildToolErrorMessage } from "../lib/index.js";
 
 const FINISH_REASON_TO_STOP: Record<string, Result["stopReason"]> = {
   stop: "done",
@@ -86,10 +86,6 @@ function normalizeToolResult(raw: unknown): ToolResult {
     }
   }
   return { content: raw };
-}
-
-function wireContent(content: unknown): string {
-  return typeof content === "string" ? content : JSON.stringify(content);
 }
 
 function safeDisplay<T>(fn: () => T): T | undefined {
@@ -370,11 +366,7 @@ export async function runLoop(
           metadata: result.metadata,
           display: resolveToolDisplay(tool, parsedArgs, (d) => d.error?.(parsedArgs, err)),
         });
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: `Error: ${err}`,
-        });
+        messages.push(buildToolErrorMessage(toolCall.id, err));
       } else {
         const out = result.content;
         emit({
@@ -385,11 +377,7 @@ export async function runLoop(
           metadata: result.metadata,
           display: resolveToolDisplay(tool, parsedArgs, (d) => d.success?.(parsedArgs, out)),
         });
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: wireContent(out),
-        });
+        messages.push(buildToolResultMessage(toolCall.id, out));
       }
     }
 
