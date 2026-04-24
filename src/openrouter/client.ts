@@ -155,10 +155,8 @@ export class OpenRouterClient {
 
 	/**
 	 * POSTs a non-streaming chat completion to `${BASE_URL}/chat/completions`
-	 * and returns the parsed response. This client does NOT support SSE
-	 * streaming — the request is sent with `stream: false`. If you need
-	 * token-by-token streaming, implement a separate client or use
-	 * `Agent.runStream()` (which streams Agent *events*, not tokens).
+	 * and returns the parsed response. The request is sent with `stream: false`.
+	 * For token-by-token SSE streaming use `completeStream` on this client.
 	 *
 	 * @throws OpenRouterError on non-2xx responses. Common codes: 401 (missing
 	 *   or invalid key), 402 (out of credits), 429 (rate limited), 503

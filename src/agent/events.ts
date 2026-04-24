@@ -7,7 +7,7 @@ export interface EventDisplay {
 
 /**
  * The discriminated-union stream emitted by `runLoop` and consumed by
- * `Agent.runStream()` and display hooks. Discriminate on `event.type`.
+ * `Agent.run()` and display hooks. Discriminate on `event.type`.
  *
  * **Lifecycle order** (per run):
  *   `agent:start` → (`message:delta*` + `message` | `tool:start` + `tool:progress*` + `tool:end`)* → (`error`)? → `agent:end`
