@@ -4,22 +4,10 @@ import { Agent } from '../../src/agent/Agent.js'
 import { Tool } from '../../src/tool/Tool.js'
 import { SessionBusyError } from '../../src/session/index.js'
 import type { CompletionsResponse } from '../../src/openrouter/index.js'
+import { mockTextResponse } from '../fixtures/completions.js'
 
 function mockOkResponse(content: string, id = 'gen-x'): CompletionsResponse {
-	return {
-		id,
-		object: 'chat.completion',
-		created: 1704067200,
-		model: 'anthropic/claude-haiku-4.5',
-		choices: [
-			{
-				finish_reason: 'stop',
-				native_finish_reason: 'stop',
-				message: { role: 'assistant', content },
-			},
-		],
-		usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
-	}
+	return mockTextResponse(content, id, { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 })
 }
 
 describe('Agent', () => {

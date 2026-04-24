@@ -2,49 +2,14 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
 import { Agent, Tool } from "../../src/index.js";
 import type { AgentEvent } from "../../src/index.js";
+import { mockTextResponse, mockToolCallResponse } from "../fixtures/completions.js";
 
-function completionWithToolCall(id: string, name: string, args: object) {
-  return {
-    id,
-    object: "chat.completion",
-    created: 1,
-    model: "anthropic/claude-haiku-4.5",
-    choices: [
-      {
-        finish_reason: "tool_calls",
-        native_finish_reason: "tool_calls",
-        message: {
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: "tc-" + id,
-              type: "function",
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        },
-      },
-    ],
-    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-  };
+function completionWithToolCall(id: string, name: string, args: Record<string, unknown>) {
+  return mockToolCallResponse(name, args, { id, callId: "tc-" + id });
 }
 
 function completionText(id: string, text: string) {
-  return {
-    id,
-    object: "chat.completion",
-    created: 1,
-    model: "anthropic/claude-haiku-4.5",
-    choices: [
-      {
-        finish_reason: "stop",
-        native_finish_reason: "stop",
-        message: { role: "assistant", content: text },
-      },
-    ],
-    usage: { prompt_tokens: 12, completion_tokens: 6, total_tokens: 18 },
-  };
+  return mockTextResponse(text, id, { prompt_tokens: 12, completion_tokens: 6, total_tokens: 18 });
 }
 
 describe("end-to-end", () => {

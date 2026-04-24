@@ -5,26 +5,22 @@ import type { AgentEvent } from "../../src/agent/events.js";
 import { Tool } from "../../src/tool/Tool.js";
 import { InMemorySessionStore } from "../../src/session/InMemorySessionStore.js";
 import type { CompletionsResponse } from "../../src/openrouter/index.js";
+import type { ToolCall, Usage } from "../../src/types/index.js";
+import { mockCompletionsResponse } from "../fixtures/completions.js";
 
-function mockResponse(partial: Partial<CompletionsResponse> & { message: { content: string | null; tool_calls?: unknown[] }; finish_reason?: string }): CompletionsResponse {
-  return {
-    id: partial.id ?? "gen-1",
-    object: "chat.completion",
-    created: 1704067200,
-    model: "anthropic/claude-haiku-4.5",
-    choices: [
-      {
-        finish_reason: partial.finish_reason ?? "stop",
-        native_finish_reason: partial.finish_reason ?? "stop",
-        message: {
-          role: "assistant",
-          content: partial.message.content,
-          tool_calls: partial.message.tool_calls as any,
-        },
-      },
-    ],
-    usage: partial.usage ?? { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-  };
+function mockResponse(partial: {
+  id?: string;
+  message: { content: string | null; tool_calls?: unknown[] };
+  finish_reason?: string;
+  usage?: unknown;
+}): CompletionsResponse {
+  return mockCompletionsResponse({
+    id: partial.id,
+    content: partial.message.content,
+    tool_calls: partial.message.tool_calls as ToolCall[] | undefined,
+    finish_reason: partial.finish_reason,
+    usage: partial.usage as Usage | undefined,
+  });
 }
 
 function mkConfig(overrides: Partial<RunLoopConfig> = {}): RunLoopConfig {
