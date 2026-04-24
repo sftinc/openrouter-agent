@@ -1,5 +1,11 @@
-import type { CompletionsRequest, CompletionsResponse, LLMConfig } from './types.js'
+import type {
+	CompletionChunk,
+	CompletionsRequest,
+	CompletionsResponse,
+	LLMConfig,
+} from './types.js'
 import { DEFAULT_MODEL } from './types.js'
+import { parseSseStream } from './sse.js'
 
 /**
  * Thrown when OpenRouter returns a non-2xx response.
@@ -76,6 +82,75 @@ export class OpenRouterClient {
 	 */
 	get llmDefaults(): LLMConfig {
 		return { ...this.defaults }
+	}
+
+	/**
+	 * POSTs a streaming chat completion to `${BASE_URL}/chat/completions` with
+	 * `stream: true` and yields parsed SSE chunks as they arrive. The final
+	 * chunk before `[DONE]` carries `usage` with an empty `choices` array.
+	 *
+	 * @throws OpenRouterError on non-2xx responses (thrown before any chunks
+	 *   are yielded). Aborts via `signal` cancel the underlying fetch and the
+	 *   SSE reader.
+	 */
+	async *completeStream(
+		request: CompletionsRequest,
+		signal?: AbortSignal,
+	): AsyncGenerator<CompletionChunk, void, void> {
+		const headers: Record<string, string> = {
+			Authorization: `Bearer ${this.apiKey}`,
+			'Content-Type': 'application/json',
+			Accept: 'text/event-stream',
+		}
+		if (this.referer) headers['HTTP-Referer'] = this.referer
+		if (this.title) headers['X-OpenRouter-Title'] = this.title
+
+		const body = {
+			model: DEFAULT_MODEL,
+			...this.defaults,
+			...request,
+			stream: true as const,
+		}
+
+		const response = await fetch(`${BASE_URL}/chat/completions`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify(body),
+			signal,
+		})
+
+		if (!response.ok) {
+			const errBody = await this.safeParseJson(response)
+			const message =
+				(errBody as { error?: { message?: string } } | undefined)?.error?.message ??
+				`HTTP ${response.status}`
+			const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)?.error?.metadata
+			throw new OpenRouterError({
+				code: response.status,
+				message,
+				body: errBody,
+				metadata,
+			})
+		}
+
+		if (!response.body) {
+			throw new OpenRouterError({
+				code: response.status,
+				message: 'streaming response had no body',
+			})
+		}
+
+		try {
+			for await (const payload of parseSseStream(response.body)) {
+				yield payload as CompletionChunk
+			}
+		} finally {
+			// Cancel the underlying body stream if the generator is abandoned
+			// early (e.g. via AbortSignal or consumer calling return()).
+			response.body.cancel().catch(() => {
+				// ignore errors on cancel — stream may already be closed
+			})
+		}
 	}
 
 	/**

@@ -123,4 +123,109 @@ describe("OpenRouterClient", () => {
       if (prev !== undefined) process.env.OPENROUTER_API_KEY = prev;
     }
   });
+
+  function sseResponse(body: string, status = 200): Response {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        ctrl.enqueue(encoder.encode(body));
+        ctrl.close();
+      },
+    });
+    return new Response(stream, {
+      status,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  }
+
+  async function collectChunks<T>(it: AsyncIterable<T>): Promise<T[]> {
+    const out: T[] = [];
+    for await (const v of it) out.push(v);
+    return out;
+  }
+
+  test("completeStream POSTs with stream:true and yields parsed chunks", async () => {
+    const body =
+      `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"finish_reason":null,"native_finish_reason":null,"delta":{"content":"Hello"}}]}\n\n` +
+      `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"finish_reason":"stop","native_finish_reason":"stop","delta":{"content":" world"}}]}\n\n` +
+      `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}\n\n` +
+      `data: [DONE]\n\n`;
+    fetchSpy.mockResolvedValue(sseResponse(body));
+
+    const client = new OpenRouterClient({ apiKey: "sk-test" });
+    const chunks = await collectChunks(
+      client.completeStream({
+        model: "m",
+        messages: [{ role: "user", content: "hi" }],
+      })
+    );
+
+    expect(chunks.length).toBe(3);
+    expect(chunks[0].choices[0].delta.content).toBe("Hello");
+    expect(chunks[2].usage?.total_tokens).toBe(3);
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(init.body as string);
+    expect(sent.stream).toBe(true);
+  });
+
+  test("completeStream throws OpenRouterError on non-2xx", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+        status: 429,
+      })
+    );
+    const client = new OpenRouterClient({ apiKey: "sk-test" });
+    await expect(
+      collectChunks(
+        client.completeStream({
+          model: "m",
+          messages: [{ role: "user", content: "hi" }],
+        })
+      )
+    ).rejects.toSatisfy((e: unknown) =>
+      e instanceof OpenRouterError && e.code === 429
+    );
+  });
+
+  test("completeStream propagates abort via AbortSignal", async () => {
+    const encoder = new TextEncoder();
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        ctrl.enqueue(
+          encoder.encode(
+            `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"finish_reason":null,"native_finish_reason":null,"delta":{"content":"a"}}]}\n\n`
+          )
+        );
+        // keep the stream open so abort has something to interrupt
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const signal = (init as RequestInit).signal as AbortSignal | undefined;
+      if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+      return new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    });
+
+    const ac = new AbortController();
+    const client = new OpenRouterClient({ apiKey: "sk-test" });
+    const it = client.completeStream(
+      { model: "m", messages: [{ role: "user", content: "hi" }] },
+      ac.signal
+    )[Symbol.asyncIterator]();
+
+    const first = await it.next();
+    expect(first.done).toBe(false);
+
+    ac.abort();
+    // next() after abort should cancel the underlying reader
+    await it.return?.();
+    expect(cancelled).toBe(true);
+  });
 });
