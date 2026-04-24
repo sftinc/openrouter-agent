@@ -22,6 +22,10 @@ export interface ToolDisplayHooks<Args> {
   error?: (args: Args, error: unknown) => Partial<EventDisplay>;
 }
 
+/**
+ * Construction-time configuration for a `Tool`. The generic `Args` captures
+ * the input shape derived from the Zod schema.
+ */
 export interface ToolConfig<Args> {
   name: string;
   description: string;
@@ -30,6 +34,13 @@ export interface ToolConfig<Args> {
   display?: ToolDisplayHooks<Args>;
 }
 
+/**
+ * A tool the agent can call. Wraps a user `execute` function with a Zod
+ * input schema (auto-converted to JSON Schema for OpenRouter) and optional
+ * display hooks for UI. Instances can be passed to multiple Agents.
+ *
+ * @template Args The validated input shape (inferred from the Zod schema).
+ */
 export class Tool<Args = unknown> {
   readonly name: string;
   readonly description: string;
@@ -45,10 +56,21 @@ export class Tool<Args = unknown> {
     this.display = config.display;
   }
 
+  /**
+   * Invoke the tool. Called by the agent loop after validating `args`
+   * against `inputSchema`. Return a string, a `ToolResult` shape, or any
+   * value (auto-wrapped as `{ content }`). Throwing or returning
+   * `{ error: string }` both signal failure to the loop.
+   */
   execute(args: Args, deps: ToolDeps): Promise<unknown> {
     return this.executeFn(args, deps);
   }
 
+  /**
+   * Serialize this tool into the `OpenRouterTool` shape OpenRouter expects.
+   * The Zod schema is converted to JSON Schema via `zod-to-json-schema`
+   * (OpenAPI 3 target).
+   */
   toOpenRouterTool(): OpenRouterTool {
     const schema = zodToJsonSchema(this.inputSchema, { target: "openApi3" });
     return {
