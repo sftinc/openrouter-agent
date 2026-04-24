@@ -70,18 +70,20 @@ main {
   padding: 10px 12px;
   border-radius: 8px;
   max-width: 85%;
-  white-space: pre-wrap;
   word-wrap: break-word;
 }
 .msg.user {
   align-self: flex-end;
   background: var(--user);
+  white-space: pre-wrap;
 }
 .msg.assistant {
   align-self: flex-start;
   background: var(--panel-alt);
   border: 1px solid var(--border);
 }
+.msg.assistant > :first-child { margin-top: 0; }
+.msg.assistant > :last-child { margin-bottom: 0; }
 .msg.error {
   align-self: flex-start;
   background: #3a1c1c;
