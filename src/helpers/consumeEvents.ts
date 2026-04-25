@@ -5,7 +5,7 @@
  * handler a fully-narrowed event parameter. Pairs naturally with
  * {@link displayOf} for UI rendering.
  */
-import type { AgentEvent } from "./events.js";
+import type { AgentEvent } from "../agent/events.js";
 
 /**
  * Per-variant typed handlers. Every handler is optional — events with no

@@ -1,6 +1,6 @@
 import { describe, test, expect, vi } from "vitest";
 import type { AgentEvent } from "../../src/agent/events.js";
-import { consumeAgentEvents } from "../../src/agent/consumeEvents.js";
+import { consumeAgentEvents } from "../../src/helpers/consumeEvents.js";
 
 function asyncIter(events: AgentEvent[]): AsyncIterable<AgentEvent> {
   return (async function* () {

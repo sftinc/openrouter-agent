@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import type { AgentEvent } from "../../src/agent/events.js";
-import { displayOf } from "../../src/agent/displayOf.js";
+import { displayOf } from "../../src/helpers/displayOf.js";
 
 describe("displayOf", () => {
   test("returns the explicit display when present", () => {

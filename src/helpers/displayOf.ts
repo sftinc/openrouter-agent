@@ -7,8 +7,8 @@
  * but exposed as a single import so consumers cannot accidentally drop the
  * SDK fallback (e.g. by writing `event.display ?? null`).
  */
-import type { AgentEvent, EventDisplay } from "./events.js";
-import { defaultDisplay } from "./events.js";
+import type { AgentEvent, EventDisplay } from "../agent/events.js";
+import { defaultDisplay } from "../agent/events.js";
 
 /**
  * Resolve the `{ title, content? }` to render for an agent event.

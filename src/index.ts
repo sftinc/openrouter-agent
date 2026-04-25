@@ -238,8 +238,8 @@ export type { SessionStore } from "./session/index.js";
  *   `AsyncIterable<AgentEvent>` that routes each event to a per-variant
  *   handler defined by {@link AgentEventHandlers}.
  */
-export { defaultDisplay, displayOf, consumeAgentEvents } from "./agent/index.js";
-export type { AgentEventHandlers } from "./agent/index.js";
+export { defaultDisplay, displayOf, consumeAgentEvents } from "./helpers/index.js";
+export type { AgentEventHandlers } from "./helpers/index.js";
 /**
  * Agent event vocabulary.
  *
