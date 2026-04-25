@@ -10,6 +10,7 @@ import { Agent, type AgentRunOptions } from "../agent/index.js";
 import { SessionBusyError } from "../session/index.js";
 import {
   pipeEventsToNodeResponse,
+  eventsToWebResponse,
   type NodeResponseLike,
 } from "./responseAdapters.js";
 
@@ -108,6 +109,73 @@ export async function handleAgentRun(
   await pipeEventsToNodeResponse(
     run as AsyncIterable<import("../agent/events.js").AgentEvent>,
     res,
+    {
+      abort,
+      headers: { ...sessionHeader, ...(options.headers ?? {}) },
+    },
+  );
+}
+
+/**
+ * Stream an {@link Agent} run as a Web `Response` in NDJSON. Counterpart to
+ * {@link handleAgentRun} for Cloudflare Workers, Deno, Bun, and any
+ * `fetch`-style handler.
+ *
+ * On {@link SessionBusyError}, returns a 409 `Response` with
+ * `Content-Type: application/json` and body `{ error, sessionId }`. Other
+ * synchronous errors from `agent.run` propagate as a rejected promise.
+ *
+ * @param agent The agent to run.
+ * @param input The user prompt or message array.
+ * @param options {@link HandleAgentRunOptions}.
+ * @returns A promise resolving to the `Response` to send back.
+ *
+ * @example
+ * ```ts
+ * export default {
+ *   async fetch(req: Request): Promise<Response> {
+ *     const { message, sessionId } = await req.json();
+ *     return handleAgentRunWebResponse(agent, message, { sessionId });
+ *   },
+ * };
+ * ```
+ */
+export async function handleAgentRunWebResponse(
+  agent: Agent,
+  input: string | Message[],
+  options: HandleAgentRunOptions = {},
+): Promise<Response> {
+  const sessionId = options.sessionId;
+  const echoHeader = options.echoSessionHeader ?? true;
+  const headerName = options.sessionHeaderName ?? "X-Session-Id";
+  const sessionHeader: Record<string, string> =
+    sessionId && echoHeader ? { [headerName]: sessionId } : {};
+
+  const abort = new AbortController();
+  let run: AsyncIterable<unknown>;
+  try {
+    run = agent.run(input, {
+      sessionId,
+      signal: abort.signal,
+      ...(options.runOptions ?? {}),
+    }) as AsyncIterable<unknown>;
+  } catch (err) {
+    if (err instanceof SessionBusyError) {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...sessionHeader,
+        ...(options.headers ?? {}),
+      };
+      return new Response(
+        JSON.stringify({ error: "session busy", sessionId }),
+        { status: 409, headers },
+      );
+    }
+    throw err;
+  }
+
+  return eventsToWebResponse(
+    run as AsyncIterable<import("../agent/events.js").AgentEvent>,
     {
       abort,
       headers: { ...sessionHeader, ...(options.headers ?? {}) },

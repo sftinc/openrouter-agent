@@ -2,7 +2,8 @@ import { describe, test, expect, vi } from "vitest";
 import { z } from "zod";
 import { Agent, SessionBusyError, setOpenRouterClient } from "../../src/index.js";
 import type { AgentEvent } from "../../src/agent/events.js";
-import { handleAgentRun } from "../../src/helpers/http.js";
+import { handleAgentRun, handleAgentRunWebResponse } from "../../src/helpers/http.js";
+import { readEventStream } from "../../src/helpers/ndjson.js";
 
 // Vitest may run these in parallel; setOpenRouterClient is idempotent for
 // our purposes and we override per-agent for runs anyway.
@@ -118,5 +119,36 @@ describe("handleAgentRun", () => {
     const agent = fakeAgent({ throwSync: new Error("boom") });
     const res = makeMockRes();
     await expect(handleAgentRun(agent, "hi", res)).rejects.toThrow("boom");
+  });
+});
+
+describe("handleAgentRunWebResponse", () => {
+  test("returns a 200 Response with NDJSON body and merged headers", async () => {
+    const events: AgentEvent[] = [
+      { type: "message:delta", runId: "r1", text: "a" },
+      { type: "message:delta", runId: "r1", text: "b" },
+    ];
+    const agent = fakeAgent({ events });
+    const res = await handleAgentRunWebResponse(agent, "hi", { sessionId: "abc" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("application/x-ndjson");
+    expect(res.headers.get("X-Session-Id")).toBe("abc");
+    const back: AgentEvent[] = [];
+    for await (const e of readEventStream(res.body!)) back.push(e);
+    expect(back).toEqual(events);
+  });
+
+  test("returns a 409 JSON Response on SessionBusyError", async () => {
+    const agent = fakeAgent({ throwSync: new SessionBusyError("abc") });
+    const res = await handleAgentRunWebResponse(agent, "hi", { sessionId: "abc" });
+    expect(res.status).toBe(409);
+    expect(res.headers.get("Content-Type")).toBe("application/json");
+    expect(res.headers.get("X-Session-Id")).toBe("abc");
+    expect(await res.json()).toEqual({ error: "session busy", sessionId: "abc" });
+  });
+
+  test("rethrows non-SessionBusy errors", async () => {
+    const agent = fakeAgent({ throwSync: new Error("boom") });
+    await expect(handleAgentRunWebResponse(agent, "hi")).rejects.toThrow("boom");
   });
 });
