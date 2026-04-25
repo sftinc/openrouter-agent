@@ -67,6 +67,42 @@ function finishToolCard(card, title, content, hasError) {
   }
 }
 
+// Renders the per-turn activity card: title = latest phase, content = full
+// list of phases (only when there's more than one). `card` is the DOM node,
+// `phases` is the ordered list, newest last.
+function renderActivity(card, phases) {
+  if (!card || phases.length === 0) return;
+  const latest = phases[phases.length - 1];
+  const titleEl = card.querySelector(".tool-title");
+  if (titleEl) titleEl.textContent = latest.title;
+  card.classList.toggle("done", phases.every((p) => p.done));
+  card.classList.toggle("error", phases.some((p) => p.error));
+
+  let contentEl = card.querySelector(".tool-content");
+  if (phases.length === 1) {
+    const only = phases[0];
+    if (only.content !== undefined) {
+      if (!contentEl) {
+        contentEl = el("div", "tool-content");
+        card.appendChild(contentEl);
+      }
+      contentEl.textContent = only.content;
+    }
+    return;
+  }
+  if (!contentEl) {
+    contentEl = el("div", "tool-content");
+    card.appendChild(contentEl);
+  }
+  contentEl.textContent = phases
+    .map((p) => {
+      const mark = p.error ? "✗" : p.done ? "✓" : "…";
+      const line = `${mark} ${p.title}`;
+      return p.content ? `${line}\n   ${p.content}` : line;
+    })
+    .join("\n");
+}
+
 function addErrorWithRetry(msg, onRetry) {
   const wrap = el("div", "msg error");
   wrap.appendChild(document.createTextNode("Error: " + msg + " "));
@@ -94,9 +130,15 @@ function displayOf(event) {
 async function runRequest(message) {
   sendBtn.disabled = true;
 
-  const toolCards = new Map();
+  // One activity card per request; `phases` is the ordered list of tool
+  // invocations (and future agent phases) so we can render them as a
+  // timeline inside a single card.
+  let activityCard = null;
+  const phases = [];
+  const phaseById = new Map();
   let assistantEl = null;
   let assistantBuf = "";
+  let renderedAssistant = false;
   let errorShown = false;
 
   const showError = (msg) => {
@@ -157,25 +199,31 @@ async function runRequest(message) {
         assistantEl = null;
         assistantBuf = "";
         const d = displayOf(event);
-        const card = addToolCard(
-          event.toolName,
-          d?.title ?? `Running ${event.toolName}`,
-          d?.content
-        );
-        toolCards.set(event.toolUseId, card);
+        const phase = {
+          id: event.toolUseId,
+          title: d?.title ?? `Running ${event.toolName}`,
+          content: d?.content,
+          done: false,
+          error: false,
+        };
+        phases.push(phase);
+        phaseById.set(event.toolUseId, phase);
+        if (!activityCard) {
+          activityCard = addToolCard(event.toolName, phase.title, phase.content);
+        }
+        renderActivity(activityCard, phases);
         break;
       }
       case "tool:end": {
-        const card = toolCards.get(event.toolUseId);
-        if (!card) break;
+        const phase = phaseById.get(event.toolUseId);
+        if (!phase) break;
         const d = displayOf(event);
         const hasError = "error" in event;
-        finishToolCard(
-          card,
-          d?.title ?? (hasError ? "Tool failed" : "Completed"),
-          d?.content,
-          hasError
-        );
+        phase.title = d?.title ?? (hasError ? "Tool failed" : phase.title);
+        if (d?.content !== undefined) phase.content = d.content;
+        phase.done = true;
+        phase.error = hasError;
+        renderActivity(activityCard, phases);
         break;
       }
       case "message:delta": {
@@ -185,6 +233,7 @@ async function runRequest(message) {
           assistantBuf = "";
         }
         assistantBuf += event.text;
+        renderedAssistant = true;
         renderMarkdown(assistantEl, assistantBuf);
         scroll();
         break;
@@ -192,8 +241,8 @@ async function runRequest(message) {
       case "message": {
         // The full assistant message. If we rendered deltas, the bubble is
         // already up-to-date — just reset state for the next turn. If for
-        // some reason no deltas arrived (e.g. non-streaming fallback), fall
-        // through to render the whole content here.
+        // some reason no deltas arrived (e.g. non-streaming fallback), render
+        // the whole content here.
         if (
           event.message?.role === "assistant" &&
           typeof event.message.content === "string" &&
@@ -202,6 +251,7 @@ async function runRequest(message) {
         ) {
           if (!assistantEl) assistantEl = addAssistantMessage();
           renderMarkdown(assistantEl, event.message.content);
+          renderedAssistant = true;
           scroll();
         }
         assistantEl = null;
@@ -214,12 +264,13 @@ async function runRequest(message) {
         } else if (event.result?.stopReason === "aborted") {
           showError("request was aborted before it finished");
         } else if (
-          !assistantEl &&
+          !renderedAssistant &&
           typeof event.result?.text === "string" &&
           event.result.text.length > 0
         ) {
-          assistantEl = addAssistantMessage();
-          renderMarkdown(assistantEl, event.result.text);
+          const el = addAssistantMessage();
+          renderMarkdown(el, event.result.text);
+          renderedAssistant = true;
           scroll();
         }
         break;
