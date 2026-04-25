@@ -122,8 +122,44 @@ function scroll() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// Vanilla mirror of the SDK's defaultDisplay/displayOf. Inlined so the demo
+// stays bundler-free; keep in sync with `src/agent/events.ts` if titles change.
+function defaultDisplay(event) {
+  switch (event.type) {
+    case "agent:start":
+      return { title: `Starting ${event.agentName}` };
+    case "agent:end": {
+      const seconds = Math.max(1, Math.round((event.elapsedMs ?? 0) / 1000));
+      const errored = event.result?.stopReason === "error";
+      return {
+        title: errored
+          ? `Completed with errors in ${seconds}s`
+          : `Completed in ${seconds}s`,
+      };
+    }
+    case "message:delta":
+      return { title: "Message delta" };
+    case "message":
+      return { title: "Message" };
+    case "tool:start":
+      return { title: `Running ${event.toolName}` };
+    case "tool:progress":
+      return { title: `Still running (${Math.round((event.elapsedMs ?? 0) / 1000)}s)` };
+    case "tool:end": {
+      const seconds = Math.max(1, Math.round((event.elapsedMs ?? 0) / 1000));
+      return {
+        title: "error" in event ? `Tool failed after ${seconds}s` : `Completed tool in ${seconds}s`,
+      };
+    }
+    case "error":
+      return { title: "Error", content: event.error?.message };
+    default:
+      return { title: event.type };
+  }
+}
+
 function displayOf(event) {
-  return event.display ?? null;
+  return event.display ?? defaultDisplay(event);
 }
 
 // Performs the fetch + stream loop for a given user message. Does not render
@@ -132,12 +168,8 @@ async function runRequest(message) {
   sendBtn.disabled = true;
 
   // One activity card per request; `phases` is the ordered list of tool
-  // invocations (and future agent phases) so we can render them as a
-  // timeline inside a single card. `agentStartedAt` is captured on
-  // agent:start so we can render "Thought for Xs" when the run finishes
-  // with no tool calls.
+  // invocations so we can render them as a timeline inside a single card.
   let activityCard = null;
-  let agentStartedAt = null;
   const phases = [];
   const phaseById = new Map();
   let assistantEl = null;
@@ -206,7 +238,6 @@ async function runRequest(message) {
         if (!activityCard) {
           activityCard = addToolCard(null, "Thinking", undefined);
         }
-        if (agentStartedAt === null) agentStartedAt = Date.now();
         break;
       }
       case "tool:start": {
@@ -283,8 +314,7 @@ async function runRequest(message) {
         // turn took, with or without tool calls. When tools ran, the
         // timeline of phases is rendered as content underneath.
         if (activityCard) {
-          const elapsedMs = agentStartedAt ? Date.now() - agentStartedAt : 0;
-          const elapsedSec = Math.max(1, Math.round(elapsedMs / 1000));
+          const elapsedSec = Math.max(1, Math.round((event.elapsedMs ?? 0) / 1000));
           const hasError = phases.some((p) => p.error);
           const title = hasError
             ? `Completed with errors in ${elapsedSec}s`
