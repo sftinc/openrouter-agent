@@ -226,12 +226,17 @@ export {
  */
 export type { SessionStore } from "./session/index.js";
 /**
- * Default event display helper.
+ * Event display and consumption helpers.
  *
- * Re-exports {@link defaultDisplay} — the fallback that produces a sensible
- * `{ title, content? }` for any {@link AgentEvent} that did not carry an
- * explicit `display` field. Use it in UIs as
- * `event.display ?? defaultDisplay(event)`.
+ * - {@link defaultDisplay} — fallback that produces a sensible
+ *   `{ title, content? }` for any {@link AgentEvent} without an explicit
+ *   `display` field.
+ * - {@link displayOf} — preferred call-site helper; returns
+ *   `event.display ?? defaultDisplay(event)` so consumers cannot accidentally
+ *   drop the SDK fallback.
+ * - {@link consumeAgentEvents} — typed dispatcher over an
+ *   `AsyncIterable<AgentEvent>` that routes each event to a per-variant
+ *   handler defined by {@link AgentEventHandlers}.
  */
 export { defaultDisplay, displayOf, consumeAgentEvents } from "./agent/index.js";
 export type { AgentEventHandlers } from "./agent/index.js";

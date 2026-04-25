@@ -241,9 +241,8 @@ export type AgentEvent =
     };
 
 /**
- * Fallback display for events that don't carry a `display` field.
- * Consumers should prefer `event.display` if set:
- * `event.display ?? defaultDisplay(event)`.
+ * Fallback display for events that don't carry a `display` field. Prefer
+ * {@link displayOf} at call sites — it applies this fallback automatically.
  *
  * @param event Any {@link AgentEvent}.
  * @returns An {@link EventDisplay} with a human-readable title (and optional
@@ -252,8 +251,8 @@ export type AgentEvent =
  *
  * @example
  * ```ts
- * for await (const ev of agent.run("hello")) {
- *   const { title, content } = ev.display ?? defaultDisplay(ev);
+ * for await (const event of agent.runStream("hello")) {
+ *   const { title, content } = displayOf(event);
  *   console.log(title);
  * }
  * ```

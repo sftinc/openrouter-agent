@@ -3,9 +3,11 @@
  *
  * Re-exports the {@link Agent} class (the primary entry point), the
  * {@link AgentRun} handle returned from `Agent.run()`, the lower-level
- * {@link runLoop} driver and its config/options shapes, and the event
+ * {@link runLoop} driver and its config/options shapes, the event
  * vocabulary ({@link AgentEvent}, {@link AgentDisplayHooks},
- * {@link EventDisplay}, {@link EventEmit}, {@link defaultDisplay}).
+ * {@link EventDisplay}, {@link EventEmit}, {@link defaultDisplay}), and
+ * the event-consumer helpers ({@link consumeAgentEvents},
+ * {@link AgentEventHandlers}, {@link displayOf}).
  *
  * Consumers should import from this folder (e.g. `from "./agent"`) rather
  * than from individual files inside it.
