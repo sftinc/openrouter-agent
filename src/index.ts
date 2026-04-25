@@ -245,9 +245,13 @@ export type { SessionStore } from "./session/index.js";
  *   The serializer yields a synthetic error line on iterator throw; the
  *   reader yields a synthetic error event on malformed lines, so consumers
  *   never see a hard parse failure terminating the iteration.
+ * - {@link pipeEventsToNodeResponse} — streams events to a Node
+ *   `http.ServerResponse` as NDJSON. Sets default headers, wires abort on
+ *   `res.on('close')`, and delegates body to `serializeEventsAsNDJSON`.
  */
-export { defaultDisplay, displayOf, consumeAgentEvents, streamText, serializeEvent, serializeEventsAsNDJSON, readEventStream } from "./helpers/index.js";
+export { defaultDisplay, displayOf, consumeAgentEvents, streamText, serializeEvent, serializeEventsAsNDJSON, readEventStream, pipeEventsToNodeResponse } from "./helpers/index.js";
 export type { AgentEventHandlers } from "./helpers/index.js";
+export type { NodeResponseLike, ResponseAdapterOptions } from "./helpers/index.js";
 /**
  * Agent event vocabulary.
  *
