@@ -116,6 +116,8 @@ export type AgentEvent =
       agentName: string;
       /** Resolved display payload from the agent's `start` hook, if any. */
       display?: EventDisplay;
+      /** Wall-clock epoch ms captured at the moment this event was emitted. */
+      startedAt: number;
     }
   | {
       /** Discriminator: marks the terminal event of a run. */
@@ -126,6 +128,12 @@ export type AgentEvent =
       result: Result;
       /** Resolved display payload from the agent's terminal hook (`success` / `error` / `end`), if any. */
       display?: EventDisplay;
+      /** Wall-clock epoch ms when the run started (matches the prior `agent:start.startedAt`). */
+      startedAt: number;
+      /** Wall-clock epoch ms when the run ended (this event was emitted). */
+      endedAt: number;
+      /** `endedAt - startedAt`. Provided so consumers can render durations without subtracting. */
+      elapsedMs: number;
     }
   | {
       /** Discriminator: incremental token output from the assistant. */
@@ -158,6 +166,8 @@ export type AgentEvent =
       input: unknown;
       /** Resolved display payload from the tool's `start` hook, if any. */
       display?: EventDisplay;
+      /** Wall-clock epoch ms captured at the moment this event was emitted. */
+      startedAt: number;
     }
   | {
       /** Discriminator: optional progress signal a tool may emit manually via `deps.emit`. The loop never produces this on its own. */
@@ -170,6 +180,8 @@ export type AgentEvent =
       elapsedMs: number;
       /** Optional display payload supplied by the tool. */
       display?: EventDisplay;
+      /** Wall-clock epoch ms when the originating `tool:start` was emitted. */
+      startedAt: number;
     }
   | {
       /** Discriminator: a tool invocation completed successfully. */
@@ -184,6 +196,12 @@ export type AgentEvent =
       metadata?: Record<string, unknown>;
       /** Resolved display payload from the tool's `success` hook, if any. */
       display?: EventDisplay;
+      /** Wall-clock epoch ms when the originating `tool:start` was emitted. */
+      startedAt: number;
+      /** Wall-clock epoch ms when this `tool:end` was emitted. */
+      endedAt: number;
+      /** `endedAt - startedAt`. Provided so consumers can render durations without subtracting. */
+      elapsedMs: number;
     }
   | {
       /** Discriminator: a tool invocation failed. Distinguish from the success variant via `"error" in event`. */
@@ -198,6 +216,12 @@ export type AgentEvent =
       metadata?: Record<string, unknown>;
       /** Resolved display payload from the tool's `error` hook, if any. */
       display?: EventDisplay;
+      /** Wall-clock epoch ms when the originating `tool:start` was emitted. */
+      startedAt: number;
+      /** Wall-clock epoch ms when this `tool:end` was emitted. */
+      endedAt: number;
+      /** `endedAt - startedAt`. Provided so consumers can render durations without subtracting. */
+      elapsedMs: number;
     }
   | {
       /** Discriminator: a run-fatal error. Always immediately precedes an `agent:end` with `stopReason: "error"`. */
