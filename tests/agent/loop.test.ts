@@ -848,10 +848,13 @@ describe("runLoop", () => {
 
     await runLoop(cfg, "go", {}, collect(events));
 
+    const toolStart = events.find((e) => e.type === "tool:start");
     const toolEnd = events.find((e) => e.type === "tool:end");
+    expect(toolStart?.type).toBe("tool:start");
     expect(toolEnd?.type).toBe("tool:end");
-    if (toolEnd?.type === "tool:end") {
+    if (toolStart?.type === "tool:start" && toolEnd?.type === "tool:end") {
       expect("error" in toolEnd).toBe(true);
+      expect(toolEnd.startedAt).toBe(toolStart.startedAt);
       expect(toolEnd.endedAt).toBeGreaterThanOrEqual(toolEnd.startedAt);
       expect(toolEnd.elapsedMs).toBe(toolEnd.endedAt - toolEnd.startedAt);
     }
