@@ -319,6 +319,7 @@ async function executeToolCall(
   const toolUseId = newToolUseId(toolCall.id);
   const toolName = toolCall.function.name;
   const tool = toolByName.get(toolName);
+  const toolStartedAt = Date.now();
 
   let parsedArgs: unknown;
   try {
@@ -333,6 +334,7 @@ async function executeToolCall(
     toolUseId,
     toolName,
     input: parsedArgs,
+    startedAt: toolStartedAt,
     display: resolveToolDisplay(tool, parsedArgs, (d) => d.start?.(parsedArgs)),
   });
 
@@ -362,24 +364,32 @@ async function executeToolCall(
 
   if ("error" in result) {
     const err = result.error;
+    const toolEndedAt = Date.now();
     emit({
       type: "tool:end",
       runId,
       toolUseId,
       error: err,
       metadata: result.metadata,
+      startedAt: toolStartedAt,
+      endedAt: toolEndedAt,
+      elapsedMs: toolEndedAt - toolStartedAt,
       display: resolveToolDisplay(tool, parsedArgs, (d) => d.error?.(parsedArgs, err, result.metadata)),
     });
     return buildToolErrorMessage(toolCall.id, err);
   }
 
   const out = result.content;
+  const toolEndedAt = Date.now();
   emit({
     type: "tool:end",
     runId,
     toolUseId,
     output: out,
     metadata: result.metadata,
+    startedAt: toolStartedAt,
+    endedAt: toolEndedAt,
+    elapsedMs: toolEndedAt - toolStartedAt,
     display: resolveToolDisplay(tool, parsedArgs, (d) => d.success?.(parsedArgs, out, result.metadata)),
   });
   return buildToolResultMessage(toolCall.id, out);
@@ -573,6 +583,7 @@ export async function runLoop(
   emit: EventEmit
 ): Promise<void> {
   const runId = newRunId();
+  const runStartedAt = Date.now();
   const parentRunId = options.parentRunId ?? config.parentRunId;
   const maxTurns = options.maxTurns ?? config.maxTurns;
   const signal = options.signal;
@@ -586,6 +597,7 @@ export async function runLoop(
     runId,
     parentRunId,
     agentName: config.agentName,
+    startedAt: runStartedAt,
     display: resolveAgentDisplay(config.display, input, (d) => d.start?.(input)),
   });
 
@@ -780,10 +792,14 @@ export async function runLoop(
     error,
   };
 
+  const runEndedAt = Date.now();
   emit({
     type: "agent:end",
     runId,
     result,
+    startedAt: runStartedAt,
+    endedAt: runEndedAt,
+    elapsedMs: runEndedAt - runStartedAt,
     display: resolveAgentDisplay(config.display, input, (d) => pickAgentEndHook(d, result)),
   });
 }
