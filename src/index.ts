@@ -18,9 +18,11 @@
  *   ({@link ToolConfig}, {@link ToolDisplayHooks}, {@link ToolDeps},
  *   {@link ToolResult}).
  * - **Agent layer** — {@link Agent}, its config/options ({@link AgentConfig},
- *   {@link AgentRunOptions}), and the event vocabulary
+ *   {@link AgentRunOptions}), the event vocabulary
  *   ({@link AgentEvent}, {@link AgentDisplayHooks}, {@link EventDisplay},
- *   {@link EventEmit}, {@link defaultDisplay}).
+ *   {@link EventEmit}, {@link defaultDisplay}), and the event-consumer
+ *   helpers ({@link consumeAgentEvents}, {@link AgentEventHandlers},
+ *   {@link displayOf}).
  * - **Sessions** — the {@link SessionStore} interface, the bundled
  *   {@link InMemorySessionStore}, and the {@link SessionBusyError} thrown when
  *   a second concurrent run is started for the same `sessionId`.
@@ -231,7 +233,8 @@ export type { SessionStore } from "./session/index.js";
  * explicit `display` field. Use it in UIs as
  * `event.display ?? defaultDisplay(event)`.
  */
-export { defaultDisplay } from "./agent/index.js";
+export { defaultDisplay, displayOf, consumeAgentEvents } from "./agent/index.js";
+export type { AgentEventHandlers } from "./agent/index.js";
 /**
  * Agent event vocabulary.
  *
