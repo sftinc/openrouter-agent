@@ -10,4 +10,4 @@ export { consumeAgentEvents } from "./consumeEvents.js";
 export type { AgentEventHandlers } from "./consumeEvents.js";
 export { defaultDisplay } from "../agent/events.js";
 export { streamText } from "./streamText.js";
-export { serializeEvent, serializeEventsAsNDJSON } from "./ndjson.js";
+export { serializeEvent, serializeEventsAsNDJSON, readEventStream } from "./ndjson.js";

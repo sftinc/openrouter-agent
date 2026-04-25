@@ -240,11 +240,13 @@ export type { SessionStore } from "./session/index.js";
  * - {@link streamText} — async-iterable of assistant text chunks; yields
  *   each `message:delta.text` and falls back to the final assistant message
  *   when no deltas arrive.
- * - {@link serializeEvent} / {@link serializeEventsAsNDJSON} — NDJSON codec
- *   for streaming events over HTTP. The latter yields a synthetic error
- *   line on iterator throw so consumers always see a clean terminator.
+ * - {@link serializeEvent} / {@link serializeEventsAsNDJSON} /
+ *   {@link readEventStream} — NDJSON codec for streaming events over HTTP.
+ *   The serializer yields a synthetic error line on iterator throw; the
+ *   reader yields a synthetic error event on malformed lines, so consumers
+ *   never see a hard parse failure terminating the iteration.
  */
-export { defaultDisplay, displayOf, consumeAgentEvents, streamText, serializeEvent, serializeEventsAsNDJSON } from "./helpers/index.js";
+export { defaultDisplay, displayOf, consumeAgentEvents, streamText, serializeEvent, serializeEventsAsNDJSON, readEventStream } from "./helpers/index.js";
 export type { AgentEventHandlers } from "./helpers/index.js";
 /**
  * Agent event vocabulary.

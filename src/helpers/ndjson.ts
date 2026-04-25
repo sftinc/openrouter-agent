@@ -68,3 +68,59 @@ export async function* serializeEventsAsNDJSON(
     yield serializeEvent(synthetic) + "\n";
   }
 }
+
+/**
+ * Parse an NDJSON byte stream back into {@link AgentEvent}s.
+ *
+ * Splits on `\n`, skips blank or whitespace-only lines, and parses each
+ * remaining line with `JSON.parse`. Lines that fail to parse yield a
+ * synthetic error event (`type: "error"`, `runId: "client"`) so a single
+ * malformed byte sequence does not abort the entire iteration.
+ *
+ * @param body A `ReadableStream<Uint8Array>` — typically `response.body`
+ *   from a `fetch` call against an NDJSON endpoint.
+ * @returns An async iterable of parsed {@link AgentEvent}s.
+ *
+ * @example
+ * ```ts
+ * import { readEventStream } from "./helpers";
+ *
+ * const response = await fetch("/api/agent", { method: "POST", body: JSON.stringify({ prompt }) });
+ * for await (const event of readEventStream(response.body!)) {
+ *   if (event.type === "message:delta") process.stdout.write(event.text);
+ * }
+ * ```
+ */
+export async function* readEventStream(
+  body: ReadableStream<Uint8Array>,
+): AsyncIterable<AgentEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      yield parseLine(line);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) yield parseLine(buffer);
+}
+
+function parseLine(line: string): AgentEvent {
+  try {
+    return JSON.parse(line) as AgentEvent;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      type: "error",
+      runId: "client",
+      error: { message },
+    };
+  }
+}
