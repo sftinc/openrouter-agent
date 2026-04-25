@@ -16,8 +16,7 @@
  *
  * @module tool/Tool
  */
-import type { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { z } from "zod";
 import type { OpenRouterTool } from "../openrouter/index.js";
 import type { ToolDeps } from "./types.js";
 import type { EventDisplay } from "../agent/events.js";
@@ -249,9 +248,10 @@ export class Tool<Args = unknown> {
   /**
    * Serialize this tool into the {@link OpenRouterTool} shape OpenRouter
    * expects in the `tools` array of a completion request. The Zod schema
-   * is converted to JSON Schema via `zod-to-json-schema` with the
-   * `openApi3` target so it round-trips through OpenRouter's parameter
-   * validation cleanly.
+   * is converted to JSON Schema via Zod 4's built-in `z.toJSONSchema()`
+   * with the `draft-7` target so it round-trips through OpenRouter's
+   * parameter validation cleanly (OpenAPI 3.0 uses a JSON Schema dialect
+   * derived from draft-7).
    *
    * Called once per request by the agent loop; no caching is performed
    * here, so callers that re-serialize repeatedly may want to memoize.
@@ -259,7 +259,7 @@ export class Tool<Args = unknown> {
    * @returns The OpenRouter `function`-typed tool descriptor.
    */
   toOpenRouterTool(): OpenRouterTool {
-    const schema = zodToJsonSchema(this.inputSchema, { target: "openApi3" });
+    const schema = z.toJSONSchema(this.inputSchema, { target: "draft-7" });
     return {
       type: "function",
       function: {

@@ -17,8 +17,7 @@
     "websearch": "tsx --env-file=.env examples/websearch.ts"
   },
   "dependencies": {
-    "zod": "^3.23.8",
-    "zod-to-json-schema": "^3.23.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",

@@ -143,7 +143,7 @@ export type {
  *
  * Re-exports the {@link Tool} class — a typed, async function the model is
  * allowed to call. Inputs are validated with a Zod schema; the JSON Schema
- * sent to the model is generated automatically via `zod-to-json-schema`.
+ * sent to the model is generated automatically via Zod 4's `z.toJSONSchema()`.
  * The {@link Agent}'s loop advertises the tool to the model, parses and
  * validates each `tool_call`, runs `execute`, and feeds the result back as a
  * `role: "tool"` conversation message.
