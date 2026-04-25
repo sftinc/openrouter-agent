@@ -2,8 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SessionBusyError } from '../../src/index.js'
-import type { AgentEvent, AgentRun } from '../../src/index.js'
+import { handleAgentRun } from '../../src/index.js'
 import { agent, sessionStore } from './agent.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -44,51 +43,7 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse): Pro
 	const isKnown = claimed ? (await sessionStore.get(claimed)) !== null : false
 	const sessionId = isKnown ? (claimed as string) : crypto.randomUUID()
 
-	// Abort the agent run if the client disconnects before the response ends.
-	// Combined with the transactional session persist in runLoop, this means a
-	// dropped stream leaves the session exactly as it was before the run, so
-	// the client can safely retry with the same user message.
-	const abort = new AbortController()
-	res.on('close', () => {
-		if (!res.writableEnded) abort.abort()
-	})
-
-	// SessionBusyError is thrown synchronously from agent.run() so we can
-	// surface it as HTTP 409 without peeking the iterator.
-	let run: AgentRun
-	try {
-		run = agent.run(message, { sessionId, signal: abort.signal })
-	} catch (err) {
-		if (err instanceof SessionBusyError) {
-			res.writeHead(409, { 'Content-Type': 'application/json' })
-			res.end(JSON.stringify({ error: 'session busy', sessionId }))
-			return
-		}
-		const msg = err instanceof Error ? err.message : String(err)
-		res.writeHead(500, { 'Content-Type': 'application/json' })
-		res.end(JSON.stringify({ error: msg }))
-		return
-	}
-
-	res.writeHead(200, {
-		'Content-Type': 'application/x-ndjson',
-		'Cache-Control': 'no-cache',
-		'X-Accel-Buffering': 'no',
-		'X-Session-Id': sessionId,
-	})
-
-	const send = (event: AgentEvent) => {
-		res.write(JSON.stringify(event) + '\n')
-	}
-
-	try {
-		for await (const ev of run) send(ev)
-	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err)
-		res.write(JSON.stringify({ type: 'error', runId: 'server', error: { message: msg } }) + '\n')
-	} finally {
-		res.end()
-	}
+	await handleAgentRun(agent, message, res, { sessionId })
 }
 
 export async function serveStatic(pathname: string, res: ServerResponse): Promise<void> {
