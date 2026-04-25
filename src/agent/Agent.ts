@@ -29,6 +29,22 @@ import { AgentRun } from "./AgentRun.js";
  * @template Input The validated argument type for this agent when used as a
  *   tool by a parent agent. Defaults to `{ input: string }` when no
  *   {@link AgentConfig.inputSchema} is provided.
+ *
+ * @example
+ * ```ts
+ * import { Agent } from "./agent";
+ * import { Tool } from "./tool";
+ *
+ * const config: AgentConfig<{ input: string }> = {
+ *   name: "writer",
+ *   description: "Drafts short prose.",
+ *   systemPrompt: "You write concise haiku.",
+ *   tools: [],
+ *   maxTurns: 5,
+ *   client: { model: "anthropic/claude-haiku-4.5", temperature: 0.7 },
+ * };
+ * const agent = new Agent(config);
+ * ```
  */
 export interface AgentConfig<Input> {
   /** Tool name surfaced to parent agents. Must be unique within a tool set. */
@@ -78,6 +94,15 @@ export interface AgentConfig<Input> {
  * with `parentRunId` exposed (subagent calls set it automatically inside
  * the tool wrapper, but it can also be set explicitly when threading runs
  * together by hand).
+ *
+ * @example
+ * ```ts
+ * const controller = new AbortController();
+ * const result = await agent.run("Continue the story.", {
+ *   sessionId: "user-42",
+ *   signal: controller.signal,
+ * });
+ * ```
  */
 export type AgentRunOptions = Omit<RunLoopOptions, "parentRunId"> & {
   /**
@@ -189,13 +214,7 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
 
   /**
    * Run the agent. The returned `AgentRun` is both `PromiseLike<Result>`
-   * and `AsyncIterable<AgentEvent>`:
-   *
-   *   const result = await agent.run(input);                 // just the result
-   *   for await (const ev of agent.run(input)) { ... }       // just the events
-   *   const run = agent.run(input);                          // both
-   *   for await (const ev of run) { ... }
-   *   const result = await run.result;
+   * and `AsyncIterable<AgentEvent>`.
    *
    * Throws `SessionBusyError` synchronously if `options.sessionId` is
    * already running.
@@ -211,6 +230,24 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
    *   {@link Result}; iterating it yields every {@link AgentEvent}.
    * @throws {SessionBusyError} Synchronously, if `options.sessionId` is
    *   already running on this Agent instance.
+   *
+   * @example
+   * ```ts
+   * // Just the final result.
+   * const result = await agent.run(input);
+   *
+   * // Just the events.
+   * for await (const ev of agent.run(input)) {
+   *   console.log(ev.type);
+   * }
+   *
+   * // Both — iterate events and await the result on the same handle.
+   * const run = agent.run(input);
+   * for await (const ev of run) {
+   *   console.log(ev.type);
+   * }
+   * const result = await run.result;
+   * ```
    */
   run(input: string | Message[], options: AgentRunOptions = {}): AgentRun {
     const release = this.acquireSession(options.sessionId);

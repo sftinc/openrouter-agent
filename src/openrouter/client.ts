@@ -37,6 +37,20 @@ import { parseSseStream } from './sse.js'
  *   - `402` — out of credits.
  *   - `429` — rate limited (check `metadata` for retry hints).
  *   - `503` — upstream provider unavailable.
+ *
+ * @example
+ * ```ts
+ * import { OpenRouterClient, OpenRouterError } from "./openrouter";
+ *
+ * try {
+ *   await client.complete({ messages });
+ * } catch (err) {
+ *   if (err instanceof OpenRouterError) {
+ *     if (err.code === 429) console.warn("rate limited", err.metadata);
+ *     else throw err;
+ *   }
+ * }
+ * ```
  */
 export class OpenRouterError extends Error {
 	/** HTTP status code that triggered the error. */
@@ -68,6 +82,19 @@ export class OpenRouterError extends Error {
  * everything on `LLMConfig` is part of the chat-completions request body.
  * `apiKey`, `referer`, and `title` are transport-level fields sent as
  * headers and are stripped from the request body.
+ *
+ * @example
+ * ```ts
+ * import { OpenRouterClient } from "./openrouter";
+ *
+ * const client = new OpenRouterClient({
+ *   apiKey: process.env.OPENROUTER_API_KEY,
+ *   referer: "https://example.com",
+ *   title: "My App",
+ *   model: "anthropic/claude-haiku-4.5",
+ *   temperature: 0.2,
+ * });
+ * ```
  */
 export interface OpenRouterClientOptions extends LLMConfig {
 	/**
