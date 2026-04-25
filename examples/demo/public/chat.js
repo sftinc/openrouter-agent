@@ -233,7 +233,7 @@ async function runRequest(message) {
         // Open the per-turn activity card up front so the user sees an
         // immediate "Thinking" indicator while we wait for the first model
         // response. Tool events below replace the title/content live; the
-        // final timeline (or "Thought for Xs" if no tools ran) is rendered
+        // final timeline (or "Completed in Xs" if no tools ran) is rendered
         // on agent:end.
         if (!activityCard) {
           activityCard = addToolCard(null, "Thinking", undefined);
