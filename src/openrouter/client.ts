@@ -140,9 +140,22 @@ export class OpenRouterClient {
 			})
 		}
 
+		const debug = !!process.env.OPENROUTER_DEBUG
+		const debugChunks: CompletionChunk[] = []
 		try {
 			for await (const payload of parseSseStream(response.body)) {
-				yield payload as CompletionChunk
+				const chunk = payload as CompletionChunk
+				if (debug) debugChunks.push(chunk)
+				yield chunk
+			}
+			if (debug) {
+				const assembled = assembleCompletionsResponse(debugChunks)
+				const hasToolCalls = (assembled.choices ?? []).some(
+					(c) => Array.isArray(c.message?.tool_calls) && c.message.tool_calls.length > 0,
+				)
+				const debugBody = JSON.stringify(assembled)
+				// eslint-disable-next-line no-console
+				console.log('[openrouter:stream] response:', hasToolCalls ? `\x1b[33m${debugBody}\x1b[0m` : debugBody)
 			}
 		} finally {
 			// Cancel the underlying body stream if the generator is abandoned
@@ -226,5 +239,106 @@ export class OpenRouterClient {
 		} catch {
 			return undefined
 		}
+	}
+}
+
+/**
+ * Folds an ordered list of streaming `CompletionChunk`s into the same
+ * `CompletionsResponse` shape the non-streaming endpoint returns. Used only
+ * for `OPENROUTER_DEBUG` logging — the runtime path consumes chunks directly.
+ *
+ * Per-choice accumulation:
+ *   - `content`: concatenate every `delta.content` string.
+ *   - `role`: take the first non-empty `delta.role` (defaults to "assistant").
+ *   - `tool_calls`: keyed by `index`; first appearance locks `id`/`type`/
+ *     `function.name`, `function.arguments` strings concatenate.
+ *   - `finish_reason` / `native_finish_reason`: last non-null wins.
+ *
+ * Top-level `id`/`model`/`created` come from the first chunk that has them;
+ * `usage` from whichever chunk carries it (typically the final frame).
+ */
+function assembleCompletionsResponse(chunks: CompletionChunk[]): CompletionsResponse {
+	type ToolAcc = { id?: string; type?: 'function'; name?: string; arguments: string }
+	type ChoiceAcc = {
+		content: string
+		role: string
+		toolCalls: Map<number, ToolAcc>
+		finish_reason: string | null
+		native_finish_reason: string | null
+	}
+	const choices = new Map<number, ChoiceAcc>()
+	let id = ''
+	let model = ''
+	let created = 0
+	let usage: CompletionsResponse['usage']
+
+	for (const chunk of chunks) {
+		if (!id && chunk.id) id = chunk.id
+		if (!model && chunk.model) model = chunk.model
+		if (!created && chunk.created) created = chunk.created
+		if (chunk.usage) usage = chunk.usage
+		const cs = chunk.choices ?? []
+		for (let i = 0; i < cs.length; i++) {
+			const sc = cs[i]!
+			// OpenRouter SSE choices carry an `index`, but our `StreamingChoice`
+			// type doesn't declare it; fall back to position when missing.
+			const idx = (sc as unknown as { index?: number }).index ?? i
+			let acc = choices.get(idx)
+			if (!acc) {
+				acc = {
+					content: '',
+					role: 'assistant',
+					toolCalls: new Map(),
+					finish_reason: null,
+					native_finish_reason: null,
+				}
+				choices.set(idx, acc)
+			}
+			if (typeof sc.delta?.content === 'string') acc.content += sc.delta.content
+			if (sc.delta?.role) acc.role = sc.delta.role
+			for (const td of sc.delta?.tool_calls ?? []) {
+				let tc = acc.toolCalls.get(td.index)
+				if (!tc) {
+					tc = { id: td.id, type: td.type, name: td.function?.name, arguments: '' }
+					acc.toolCalls.set(td.index, tc)
+				} else {
+					if (!tc.id && td.id) tc.id = td.id
+					if (!tc.type && td.type) tc.type = td.type
+					if (!tc.name && td.function?.name) tc.name = td.function.name
+				}
+				if (typeof td.function?.arguments === 'string') tc.arguments += td.function.arguments
+			}
+			if (sc.finish_reason !== null && sc.finish_reason !== undefined) acc.finish_reason = sc.finish_reason
+			if (sc.native_finish_reason !== null && sc.native_finish_reason !== undefined)
+				acc.native_finish_reason = sc.native_finish_reason
+		}
+	}
+
+	const sortedIndexes = [...choices.keys()].sort((a, b) => a - b)
+	return {
+		id,
+		object: 'chat.completion',
+		created,
+		model,
+		choices: sortedIndexes.map((idx) => {
+			const acc = choices.get(idx)!
+			const toolCalls = [...acc.toolCalls.entries()]
+				.sort(([a], [b]) => a - b)
+				.map(([, tc]) => ({
+					id: tc.id ?? '',
+					type: (tc.type ?? 'function') as 'function',
+					function: { name: tc.name ?? '', arguments: tc.arguments },
+				}))
+			return {
+				finish_reason: acc.finish_reason,
+				native_finish_reason: acc.native_finish_reason,
+				message: {
+					role: acc.role,
+					content: acc.content.length > 0 ? acc.content : null,
+					...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+				},
+			}
+		}),
+		...(usage ? { usage } : {}),
 	}
 }
