@@ -368,15 +368,9 @@ export class OpenRouterClient {
 			const hasToolCalls = (json.choices ?? []).some(
 				(c) => Array.isArray(c.message?.tool_calls) && c.message.tool_calls.length > 0,
 			)
-			const debugBody = JSON.stringify(json, (key, value) => {
-				// Hide reasoning details
-				// if (key === 'reasoning' || key === 'reasoning_details') return undefined
-				return value
-			})
-			if (process.env.OPENROUTER_DEBUG) {
-				// eslint-disable-next-line no-console
-				console.log('[openrouter] response:', hasToolCalls ? `\x1b[33m${debugBody}\x1b[0m` : debugBody)
-			}
+			const debugBody = JSON.stringify(json)
+			// eslint-disable-next-line no-console
+			console.log('[openrouter] response:', hasToolCalls ? `\x1b[33m${debugBody}\x1b[0m` : debugBody)
 		}
 		return json
 	}
