@@ -20,9 +20,11 @@ import { defaultDisplay } from "./events.js";
  *
  * @example
  * ```ts
+ * import { displayOf } from "@sftinc/openrouter-agent";
+ *
  * for await (const event of agent.runStream("hello")) {
  *   const { title, content } = displayOf(event);
- *   console.log(title);
+ *   console.log(title, content ?? "");
  * }
  * ```
  */

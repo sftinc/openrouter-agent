@@ -251,10 +251,12 @@ export type AgentEvent =
  *
  * @example
  * ```ts
- * for await (const event of agent.runStream("hello")) {
- *   const { title, content } = displayOf(event);
- *   console.log(title);
- * }
+ * import { defaultDisplay } from "@sftinc/openrouter-agent";
+ *
+ * // Direct use; most callers should reach for `displayOf` instead, which
+ * // applies this fallback automatically when `event.display` is unset.
+ * const { title } = defaultDisplay(event);
+ * console.log(title);
  * ```
  */
 export function defaultDisplay(event: AgentEvent): EventDisplay {
