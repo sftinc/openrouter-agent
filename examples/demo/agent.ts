@@ -1,15 +1,60 @@
+/**
+ * @file Demo agent wiring.
+ *
+ * Constructs the agent used by the demo backend. The module is organized so
+ * the dependency chain reads top-to-bottom — each step depends only on the
+ * ones above it:
+ *
+ * 1. **OpenRouter client** — global LLM transport. Must be registered before
+ *    any {@link Agent} is constructed.
+ * 2. **Tools** — pure capabilities the agent can invoke.
+ * 3. **Session store** — owns conversation history; shared with `backend.ts`
+ *    so the HTTP layer can validate session ids.
+ * 4. **Agent** — ties (1)–(3) together with a system prompt.
+ *
+ * `backend.ts` imports {@link agent} and {@link sessionStore} from this
+ * module; nothing else here is exported.
+ */
+
 import { z } from 'zod'
 import { setOpenRouterClient, Tool, Agent, InMemorySessionStore } from '../../src/index.js'
 
+/**
+ * Registers a process-wide OpenRouter client. Every {@link Agent} constructed
+ * afterwards picks it up automatically — the client does not need to be
+ * passed into the {@link Agent} constructor. Per-agent or per-run `client`
+ * overrides (an `LLMConfig`) layer on top of these defaults.
+ *
+ * The API key is read from `process.env.OPENROUTER_API_KEY`.
+ */
+setOpenRouterClient({
+	// model: 'inception/mercury-2',
+	max_tokens: 2000,
+	temperature: 0.3,
+	// reasoning: { effort: 'high' },
+	title: 'openrouter-agent demo',
+})
+
+/**
+ * Sleeps for a random duration in `[minMs, maxMs)`.
+ *
+ * Used only to make tool activity visible in the demo UI; real tools should
+ * not artificially slow themselves down.
+ */
 function randomDelay(minMs: number, maxMs: number): Promise<void> {
 	const ms = minMs + Math.random() * (maxMs - minMs)
 	return new Promise((r) => setTimeout(r, ms))
 }
 
-// ---------------------------------------------------------------------------
-// Tools
-// ---------------------------------------------------------------------------
-
+/**
+ * Evaluates a basic arithmetic expression.
+ *
+ * The input is regex-validated to contain only digits, the four basic
+ * operators, parentheses, decimals, and whitespace before being handed to
+ * `Function(...)`. This is safe for the demo's narrow grammar but is **not**
+ * a general-purpose sandbox — do not copy the `Function` trick into
+ * production code that accepts arbitrary input.
+ */
 const calculator = new Tool({
 	name: 'calculator',
 	description:
@@ -32,6 +77,14 @@ const calculator = new Tool({
 	},
 })
 
+/**
+ * Returns the current date and time, optionally formatted for a specific
+ * IANA timezone.
+ *
+ * If `timezone` is omitted, the result is rendered in UTC. An invalid
+ * timezone string causes `toLocaleString` to throw, which is rewrapped as a
+ * user-friendly error.
+ */
 const currentTime = new Tool({
 	name: 'current_time',
 	description: "Returns the current date and time. Optionally in a specific IANA timezone (e.g. 'America/New_York').",
@@ -61,6 +114,14 @@ const currentTime = new Tool({
 	},
 })
 
+/**
+ * Searches the web via OpenRouter's built-in `openrouter:web_search` plugin.
+ *
+ * Instead of doing work itself, this tool delegates to a nested LLM call
+ * (`deps.complete`) that is configured to use the web-search plugin. URL
+ * citations on the response are extracted into `metadata.sources` so the
+ * `display.success` formatter can render a source list to the UI.
+ */
 const webSearch = new Tool({
 	name: 'web_search',
 	description:
@@ -103,32 +164,23 @@ const webSearch = new Tool({
 	},
 })
 
-// ---------------------------------------------------------------------------
-// OpenRouter client
-//
-// Register the project's OpenRouter client once at startup. Every Agent
-// constructed afterwards uses it automatically. Per-agent or per-run `client`
-// overrides (an `LLMConfig`) layer on top.
-// ---------------------------------------------------------------------------
-
-setOpenRouterClient({
-	// model: 'inception/mercury-2',
-	max_tokens: 2000,
-	temperature: 0.3,
-	// reasoning: { effort: 'high' },
-	title: 'openrouter-agent demo',
-})
-
-// ---------------------------------------------------------------------------
-// Agent
-//
-// The session store is owned by the demo (not defaulted by Agent) so the
-// backend can check whether a client-supplied session id actually refers to
-// a known session before honoring it. Unknown ids are treated as absent.
-// ---------------------------------------------------------------------------
-
+/**
+ * In-memory conversation store shared with `backend.ts`.
+ *
+ * Owned by the demo (rather than defaulted inside {@link Agent}) so the HTTP
+ * layer can check whether a client-supplied session id actually refers to a
+ * known session before honoring it. Unknown ids are treated as absent and
+ * the server mints a fresh one.
+ */
 export const sessionStore = new InMemorySessionStore()
 
+/**
+ * The demo assistant.
+ *
+ * Combines the OpenRouter client (registered above), the three tools, and
+ * {@link sessionStore}. The client is picked up implicitly from
+ * `setOpenRouterClient` — it is not passed in here.
+ */
 export const agent = new Agent({
 	name: 'demo-assistant',
 	description: 'A helpful assistant with a calculator, current time, and web search.',

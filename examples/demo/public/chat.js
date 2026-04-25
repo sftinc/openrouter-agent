@@ -67,40 +67,41 @@ function finishToolCard(card, title, content, hasError) {
   }
 }
 
-// Renders the per-turn activity card: title = latest phase, content = full
-// list of phases (only when there's more than one). `card` is the DOM node,
-// `phases` is the ordered list, newest last.
-function renderActivity(card, phases) {
-  if (!card || phases.length === 0) return;
-  const latest = phases[phases.length - 1];
+// Sets the activity card title in place.
+function setActivityTitle(card, title) {
   const titleEl = card.querySelector(".tool-title");
-  if (titleEl) titleEl.textContent = latest.title;
-  card.classList.toggle("done", phases.every((p) => p.done));
-  card.classList.toggle("error", phases.some((p) => p.error));
+  if (titleEl) titleEl.textContent = title;
+}
 
+// Replaces the activity card content. Pass undefined/empty to drop it.
+function setActivityContent(card, content) {
   let contentEl = card.querySelector(".tool-content");
-  if (phases.length === 1) {
-    const only = phases[0];
-    if (only.content !== undefined) {
-      if (!contentEl) {
-        contentEl = el("div", "tool-content");
-        card.appendChild(contentEl);
-      }
-      contentEl.textContent = only.content;
-    }
+  if (content === undefined || content === null || content === "") {
+    if (contentEl) contentEl.remove();
     return;
   }
   if (!contentEl) {
     contentEl = el("div", "tool-content");
     card.appendChild(contentEl);
   }
-  contentEl.textContent = phases
-    .map((p) => {
-      const mark = p.error ? "✗" : p.done ? "✓" : "…";
-      const line = `${mark} ${p.title}`;
-      return p.content ? `${line}\n   ${p.content}` : line;
-    })
-    .join("\n");
+  contentEl.textContent = content;
+}
+
+// Renders the final timeline of phases as the card's content. Used on
+// agent:end so the user can see what ran (and whether each step succeeded).
+function renderTimeline(card, phases) {
+  card.classList.toggle("done", phases.every((p) => p.done));
+  card.classList.toggle("error", phases.some((p) => p.error));
+  if (phases.length === 0) return;
+  setActivityContent(
+    card,
+    phases
+      .map((p) => {
+        const mark = p.error ? "✗" : p.done ? "✓" : "…";
+        return `${mark} ${p.title}`;
+      })
+      .join("\n"),
+  );
 }
 
 function addErrorWithRetry(msg, onRetry) {
@@ -132,8 +133,11 @@ async function runRequest(message) {
 
   // One activity card per request; `phases` is the ordered list of tool
   // invocations (and future agent phases) so we can render them as a
-  // timeline inside a single card.
+  // timeline inside a single card. `agentStartedAt` is captured on
+  // agent:start so we can render "Thought for Xs" when the run finishes
+  // with no tool calls.
   let activityCard = null;
+  let agentStartedAt = null;
   const phases = [];
   const phaseById = new Map();
   let assistantEl = null;
@@ -193,6 +197,18 @@ async function runRequest(message) {
 
   function handleEvent(event) {
     switch (event.type) {
+      case "agent:start": {
+        // Open the per-turn activity card up front so the user sees an
+        // immediate "Thinking" indicator while we wait for the first model
+        // response. Tool events below replace the title/content live; the
+        // final timeline (or "Thought for Xs" if no tools ran) is rendered
+        // on agent:end.
+        if (!activityCard) {
+          activityCard = addToolCard(null, "Thinking", undefined);
+        }
+        if (agentStartedAt === null) agentStartedAt = Date.now();
+        break;
+      }
       case "tool:start": {
         // A tool call interrupts the current assistant bubble; next text
         // belongs to a fresh bubble for the post-tool turn.
@@ -210,8 +226,10 @@ async function runRequest(message) {
         phaseById.set(event.toolUseId, phase);
         if (!activityCard) {
           activityCard = addToolCard(event.toolName, phase.title, phase.content);
+        } else {
+          setActivityTitle(activityCard, phase.title);
+          setActivityContent(activityCard, phase.content);
         }
-        renderActivity(activityCard, phases);
         break;
       }
       case "tool:end": {
@@ -223,7 +241,8 @@ async function runRequest(message) {
         if (d?.content !== undefined) phase.content = d.content;
         phase.done = true;
         phase.error = hasError;
-        renderActivity(activityCard, phases);
+        setActivityTitle(activityCard, phase.title);
+        setActivityContent(activityCard, phase.content);
         break;
       }
       case "message:delta": {
@@ -259,6 +278,25 @@ async function runRequest(message) {
         break;
       }
       case "agent:end": {
+        // Replace the live title/content with the final state. The title
+        // always reports the elapsed time so the user sees how long the
+        // turn took, with or without tool calls. When tools ran, the
+        // timeline of phases is rendered as content underneath.
+        if (activityCard) {
+          const elapsedMs = agentStartedAt ? Date.now() - agentStartedAt : 0;
+          const elapsedSec = Math.max(1, Math.round(elapsedMs / 1000));
+          const hasError = phases.some((p) => p.error);
+          const title = hasError
+            ? `Completed with errors in ${elapsedSec}s`
+            : `Completed in ${elapsedSec}s`;
+          setActivityTitle(activityCard, title);
+          if (phases.length === 0) {
+            setActivityContent(activityCard, undefined);
+            activityCard.classList.add("done");
+          } else {
+            renderTimeline(activityCard, phases);
+          }
+        }
         if (event.result?.stopReason === "error" && event.result?.error?.message) {
           showError(event.result.error.message);
         } else if (event.result?.stopReason === "aborted") {
@@ -279,7 +317,7 @@ async function runRequest(message) {
         showError(event.error?.message ?? "unknown error");
         break;
       }
-      // agent:start, tool:progress ignored in this demo
+      // tool:progress ignored in this demo
     }
   }
 }
