@@ -249,10 +249,15 @@ export type { SessionStore } from "./session/index.js";
  *   low-level adapters that stream events as NDJSON to a Node
  *   `ServerResponse` or a Web `Response` respectively. Both share
  *   {@link ResponseAdapterOptions} and wire abort on transport close.
+ * - {@link handleAgentRun} — Node response handler that composes
+ *   `agent.run` + abort wiring + `SessionBusyError` → 409 mapping and
+ *   delegates the stream to {@link pipeEventsToNodeResponse}. Drop down
+ *   to the lower-level adapter when you need custom request handling.
  */
-export { defaultDisplay, displayOf, consumeAgentEvents, streamText, serializeEvent, serializeEventsAsNDJSON, readEventStream, pipeEventsToNodeResponse, eventsToWebResponse } from "./helpers/index.js";
+export { defaultDisplay, displayOf, consumeAgentEvents, streamText, serializeEvent, serializeEventsAsNDJSON, readEventStream, pipeEventsToNodeResponse, eventsToWebResponse, handleAgentRun } from "./helpers/index.js";
 export type { AgentEventHandlers } from "./helpers/index.js";
 export type { NodeResponseLike, ResponseAdapterOptions } from "./helpers/index.js";
+export type { HandleAgentRunOptions, HandleAgentRunNodeOptions } from "./helpers/index.js";
 /**
  * Agent event vocabulary.
  *

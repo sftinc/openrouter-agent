@@ -13,3 +13,5 @@ export { streamText } from "./streamText.js";
 export { serializeEvent, serializeEventsAsNDJSON, readEventStream } from "./ndjson.js";
 export { pipeEventsToNodeResponse, eventsToWebResponse } from "./responseAdapters.js";
 export type { NodeResponseLike, ResponseAdapterOptions } from "./responseAdapters.js";
+export { handleAgentRun } from "./http.js";
+export type { HandleAgentRunOptions, HandleAgentRunNodeOptions } from "./http.js";
