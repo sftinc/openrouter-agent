@@ -40,4 +40,13 @@ describe("displayOf", () => {
     };
     expect(displayOf(ev).title).toBe("Completed tool in 2s");
   });
+
+  test("falls back for message:delta variant", () => {
+    const ev: AgentEvent = {
+      type: "message:delta",
+      runId: "r1",
+      text: "hello",
+    };
+    expect(displayOf(ev)).toEqual({ title: "Message delta" });
+  });
 });

@@ -142,6 +142,8 @@ export type AgentEvent =
       runId: string;
       /** Newly arrived text since the previous delta. NOT a cumulative buffer. */
       text: string;
+      /** Optional display payload supplied by the emitter. */
+      display?: EventDisplay;
     }
   | {
       /** Discriminator: a complete assistant message (possibly with `tool_calls`). */
