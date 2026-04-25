@@ -11,5 +11,5 @@ export type { AgentEventHandlers } from "./consumeEvents.js";
 export { defaultDisplay } from "../agent/events.js";
 export { streamText } from "./streamText.js";
 export { serializeEvent, serializeEventsAsNDJSON, readEventStream } from "./ndjson.js";
-export { pipeEventsToNodeResponse } from "./responseAdapters.js";
+export { pipeEventsToNodeResponse, eventsToWebResponse } from "./responseAdapters.js";
 export type { NodeResponseLike, ResponseAdapterOptions } from "./responseAdapters.js";

@@ -116,3 +116,51 @@ export async function pipeEventsToNodeResponse(
     res.end();
   }
 }
+
+/**
+ * Stream an {@link AgentEvent} source as a Web `Response` body in NDJSON.
+ * Suitable for Cloudflare Workers, Deno, Bun, or any `fetch`-style handler.
+ *
+ * If `options.abort` is provided, the returned stream's `cancel()` calls
+ * `abort.abort()` so a client disconnect propagates into the run.
+ *
+ * @example
+ * ```ts
+ * import { eventsToWebResponse } from "./helpers";
+ *
+ * export default {
+ *   async fetch(req: Request): Promise<Response> {
+ *     const abort = new AbortController();
+ *     const stream = agent.runStream("hello", { signal: abort.signal });
+ *     return eventsToWebResponse(stream, { abort });
+ *   },
+ * };
+ * ```
+ *
+ * @param source Any `AsyncIterable<AgentEvent>`.
+ * @param options {@link ResponseAdapterOptions}.
+ * @returns A Web `Response` with status 200 by default and an NDJSON stream body.
+ */
+export function eventsToWebResponse(
+  source: AsyncIterable<AgentEvent>,
+  options: ResponseAdapterOptions = {},
+): Response {
+  const headers = { ...NDJSON_DEFAULT_HEADERS, ...(options.headers ?? {}) };
+  const encoder = new TextEncoder();
+  let iterator: AsyncIterator<string> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!iterator) iterator = serializeEventsAsNDJSON(source)[Symbol.asyncIterator]();
+      const { value, done } = await iterator.next();
+      if (done) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(value));
+    },
+    cancel() {
+      if (options.abort && !options.abort.signal.aborted) options.abort.abort();
+    },
+  });
+  return new Response(stream, { status: options.status ?? 200, headers });
+}

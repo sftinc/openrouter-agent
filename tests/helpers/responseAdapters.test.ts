@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import type { AgentEvent } from "../../src/agent/events.js";
-import { pipeEventsToNodeResponse } from "../../src/helpers/responseAdapters.js";
+import { pipeEventsToNodeResponse, eventsToWebResponse } from "../../src/helpers/responseAdapters.js";
+import { readEventStream } from "../../src/helpers/ndjson.js";
 
 async function* iter(events: AgentEvent[]): AsyncIterable<AgentEvent> {
   for (const e of events) yield e;
@@ -97,5 +98,50 @@ describe("pipeEventsToNodeResponse", () => {
     res.closeListeners.forEach((fn) => fn());
     // close after end is a no-op because writableEnded is true
     expect(abort.signal.aborted).toBe(false);
+  });
+});
+
+describe("eventsToWebResponse", () => {
+  test("returns a Response with default NDJSON headers and 200 status", async () => {
+    const events: AgentEvent[] = [
+      { type: "message:delta", runId: "r1", text: "a" },
+      { type: "message:delta", runId: "r1", text: "b" },
+    ];
+    const res = eventsToWebResponse(iter(events));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("application/x-ndjson");
+    expect(res.headers.get("Cache-Control")).toBe("no-cache");
+    expect(res.headers.get("X-Accel-Buffering")).toBe("no");
+    expect(res.body).not.toBeNull();
+    const back: AgentEvent[] = [];
+    for await (const e of readEventStream(res.body!)) back.push(e);
+    expect(back).toEqual(events);
+  });
+
+  test("merges caller-supplied headers over defaults", () => {
+    const res = eventsToWebResponse(iter([]), {
+      headers: { "X-Session-Id": "abc", "Cache-Control": "no-store" },
+      status: 201,
+    });
+    expect(res.status).toBe(201);
+    expect(res.headers.get("X-Session-Id")).toBe("abc");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(res.headers.get("Content-Type")).toBe("application/x-ndjson");
+  });
+
+  test("calls abort.abort() when the stream is cancelled", async () => {
+    const abort = new AbortController();
+
+    async function* slow(): AsyncIterable<AgentEvent> {
+      yield { type: "message:delta", runId: "r1", text: "a" };
+      // Hang indefinitely until abort.
+      await new Promise<void>((resolve) => abort.signal.addEventListener("abort", () => resolve()));
+    }
+
+    const res = eventsToWebResponse(slow(), { abort });
+    const reader = res.body!.getReader();
+    await reader.read(); // pull the first chunk so the stream is active
+    await reader.cancel();
+    expect(abort.signal.aborted).toBe(true);
   });
 });
