@@ -32,7 +32,10 @@ export interface AgentEventHandlers {
   onToolProgress?: (e: Extract<AgentEvent, { type: "tool:progress" }>) => void | Promise<void>;
   /** Called once when a tool invocation ends (success or failure). */
   onToolEnd?: (e: Extract<AgentEvent, { type: "tool:end" }>) => void | Promise<void>;
-  /** Called once at most per run, immediately before a terminal `agent:end` with `stopReason: "error"`. */
+  /**
+   * Called when a fatal run error occurs. Always precedes an `agent:end`
+   * with `stopReason: "error"`. Emitted at most once per run.
+   */
   onError?: (e: Extract<AgentEvent, { type: "error" }>) => void | Promise<void>;
   /**
    * Catch-all. Runs AFTER any matching typed handler. Useful for logging or
@@ -92,6 +95,12 @@ export async function consumeAgentEvents(
       case "error":
         if (handlers.onError) await handlers.onError(event);
         break;
+      default: {
+        // exhaustiveness check — TS errors here if a new AgentEvent variant
+        // is added without updating this switch and AgentEventHandlers.
+        const _never: never = event;
+        void _never;
+      }
     }
     if (handlers.onAny) await handlers.onAny(event);
   }
