@@ -745,6 +745,117 @@ describe("runLoop", () => {
       expect(end.result.error?.message).toBe("boom");
     }
   });
+
+  test("agent:start and agent:end carry timing fields", async () => {
+    const events: AgentEvent[] = [];
+    const cfg = mkConfig();
+    const before = Date.now();
+    await runLoop(cfg, "hi", {}, collect(events));
+    const after = Date.now();
+
+    const start = events.find((e) => e.type === "agent:start");
+    const end = events.find((e) => e.type === "agent:end");
+    expect(start?.type).toBe("agent:start");
+    expect(end?.type).toBe("agent:end");
+    if (start?.type === "agent:start") {
+      expect(start.startedAt).toBeGreaterThanOrEqual(before);
+      expect(start.startedAt).toBeLessThanOrEqual(after);
+    }
+    if (end?.type === "agent:end") {
+      expect(end.endedAt).toBeGreaterThanOrEqual(end.startedAt);
+      expect(end.elapsedMs).toBe(end.endedAt - end.startedAt);
+      expect(end.endedAt).toBeLessThanOrEqual(after);
+    }
+    if (start?.type === "agent:start" && end?.type === "agent:end") {
+      expect(start.startedAt).toBe(end.startedAt);
+    }
+  });
+
+  test("tool:start and tool:end carry timing fields", async () => {
+    const events: AgentEvent[] = [];
+    const tool = new Tool({
+      name: "echo",
+      description: "echo",
+      inputSchema: z.object({ text: z.string() }),
+      execute: async (args) => `ECHO:${args.text}`,
+    });
+    const client = {
+      completeStream: vi.fn()
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
+            id: "gen-1",
+            finish_reason: "tool_calls",
+            content: null,
+            tool_calls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: { name: "echo", arguments: JSON.stringify({ text: "hi" }) },
+              },
+            ],
+          }))
+        )
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({ id: "gen-2", content: "final" }))
+        ),
+    };
+    const cfg = mkConfig({ tools: [tool], openrouter: client as any });
+
+    await runLoop(cfg, "please echo", {}, collect(events));
+
+    const toolStart = events.find((e) => e.type === "tool:start");
+    const toolEnd = events.find((e) => e.type === "tool:end");
+    expect(toolStart?.type).toBe("tool:start");
+    expect(toolEnd?.type).toBe("tool:end");
+    if (toolStart?.type === "tool:start" && toolEnd?.type === "tool:end") {
+      expect(toolEnd.startedAt).toBe(toolStart.startedAt);
+      expect(toolEnd.endedAt).toBeGreaterThanOrEqual(toolEnd.startedAt);
+      expect(toolEnd.elapsedMs).toBe(toolEnd.endedAt - toolEnd.startedAt);
+    }
+  });
+
+  test("tool:end on error carries timing fields", async () => {
+    const events: AgentEvent[] = [];
+    const tool = new Tool({
+      name: "boom",
+      description: "fails",
+      inputSchema: z.object({}),
+      execute: async () => {
+        throw new Error("nope");
+      },
+    });
+    const client = {
+      completeStream: vi.fn()
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
+            id: "gen-1",
+            finish_reason: "tool_calls",
+            content: null,
+            tool_calls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: { name: "boom", arguments: "{}" },
+              },
+            ],
+          }))
+        )
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({ id: "gen-2", content: "ok" }))
+        ),
+    };
+    const cfg = mkConfig({ tools: [tool], openrouter: client as any });
+
+    await runLoop(cfg, "go", {}, collect(events));
+
+    const toolEnd = events.find((e) => e.type === "tool:end");
+    expect(toolEnd?.type).toBe("tool:end");
+    if (toolEnd?.type === "tool:end") {
+      expect("error" in toolEnd).toBe(true);
+      expect(toolEnd.endedAt).toBeGreaterThanOrEqual(toolEnd.startedAt);
+      expect(toolEnd.elapsedMs).toBe(toolEnd.endedAt - toolEnd.startedAt);
+    }
+  });
 });
 
 describe("Usage accumulation — multimodal & cost", () => {
