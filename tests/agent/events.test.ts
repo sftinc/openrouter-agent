@@ -7,6 +7,7 @@ describe("defaultDisplay", () => {
       type: "agent:start",
       runId: "r1",
       agentName: "research",
+      startedAt: 0,
     };
     expect(defaultDisplay(ev).title).toBe("Starting research");
   });
@@ -18,29 +19,36 @@ describe("defaultDisplay", () => {
       toolUseId: "t1",
       toolName: "web_search",
       input: { queries: ["foo"] },
+      startedAt: 0,
     };
     expect(defaultDisplay(ev).title).toBe("Running web_search");
   });
 
-  test("tool:end shows success or failure", () => {
+  test("tool:end shows success or failure with elapsed", () => {
     const ok: AgentEvent = {
       type: "tool:end",
       runId: "r1",
       toolUseId: "t1",
       output: "result",
+      startedAt: 1000,
+      endedAt: 3500,
+      elapsedMs: 2500,
     };
-    expect(defaultDisplay(ok).title).toBe("Completed tool");
+    expect(defaultDisplay(ok).title).toBe("Completed tool in 3s");
     const err: AgentEvent = {
       type: "tool:end",
       runId: "r1",
       toolUseId: "t1",
       error: "something broke",
+      startedAt: 1000,
+      endedAt: 4200,
+      elapsedMs: 3200,
     };
-    expect(defaultDisplay(err).title).toBe("Tool failed");
+    expect(defaultDisplay(err).title).toBe("Tool failed after 3s");
   });
 
-  test("agent:end title is Done", () => {
-    const ev: AgentEvent = {
+  test("agent:end title shows elapsed seconds", () => {
+    const ok: AgentEvent = {
       type: "agent:end",
       runId: "r1",
       result: {
@@ -50,8 +58,28 @@ describe("defaultDisplay", () => {
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         generationIds: [],
       },
+      startedAt: 0,
+      endedAt: 5000,
+      elapsedMs: 5000,
     };
-    expect(defaultDisplay(ev).title).toBe("Done");
+    expect(defaultDisplay(ok).title).toBe("Completed in 5s");
+
+    const err: AgentEvent = {
+      type: "agent:end",
+      runId: "r1",
+      result: {
+        text: "",
+        messages: [],
+        stopReason: "error",
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        generationIds: [],
+        error: { message: "boom" },
+      },
+      startedAt: 0,
+      endedAt: 1500,
+      elapsedMs: 1500,
+    };
+    expect(defaultDisplay(err).title).toBe("Completed with errors in 2s");
   });
 
   test("error includes the error message", () => {

@@ -260,8 +260,15 @@ export function defaultDisplay(event: AgentEvent): EventDisplay {
   switch (event.type) {
     case "agent:start":
       return { title: `Starting ${event.agentName}` };
-    case "agent:end":
-      return { title: "Done" };
+    case "agent:end": {
+      const seconds = Math.max(1, Math.round(event.elapsedMs / 1000));
+      const errored = event.result.stopReason === "error";
+      return {
+        title: errored
+          ? `Completed with errors in ${seconds}s`
+          : `Completed in ${seconds}s`,
+      };
+    }
     case "message:delta":
       return { title: "Message delta" };
     case "message":
@@ -270,8 +277,12 @@ export function defaultDisplay(event: AgentEvent): EventDisplay {
       return { title: `Running ${event.toolName}` };
     case "tool:progress":
       return { title: `Still running (${Math.round(event.elapsedMs / 1000)}s)` };
-    case "tool:end":
-      return { title: "error" in event ? "Tool failed" : "Completed tool" };
+    case "tool:end": {
+      const seconds = Math.max(1, Math.round(event.elapsedMs / 1000));
+      return {
+        title: "error" in event ? `Tool failed after ${seconds}s` : `Completed tool in ${seconds}s`,
+      };
+    }
     case "error":
       return { title: "Error", content: event.error.message };
   }
