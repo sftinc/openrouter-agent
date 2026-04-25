@@ -22,6 +22,7 @@ export {
 export type { SessionStore } from "./session/index.js";
 export { defaultDisplay } from "./agent/index.js";
 export type {
+  AgentDisplayHooks,
   AgentEvent,
   EventDisplay,
   EventEmit,

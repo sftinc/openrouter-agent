@@ -6,7 +6,7 @@ import { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
 import { InMemorySessionStore, SessionBusyError } from "../session/index.js";
-import type { EventDisplay } from "./events.js";
+import type { AgentDisplayHooks } from "./events.js";
 import { runLoop, type RunLoopConfig, type RunLoopOptions } from "./loop.js";
 import { AgentRun } from "./AgentRun.js";
 
@@ -19,10 +19,7 @@ export interface AgentConfig<Input> {
   inputSchema?: z.ZodType<Input>;
   maxTurns?: number;
   sessionStore?: SessionStore;
-  display?: {
-    start?: (input: string | Message[]) => EventDisplay;
-    end?: (result: Result) => EventDisplay;
-  };
+  display?: AgentDisplayHooks;
 }
 
 export type AgentRunOptions = Omit<RunLoopOptions, "parentRunId"> & {

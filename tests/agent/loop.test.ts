@@ -802,4 +802,95 @@ describe("Usage accumulation — multimodal & cost", () => {
     expect((end.result.usage as any).cost_details?.upstream_inference_completions_cost).toBeCloseTo(0.03);
     expect((end.result.usage as any).is_byok).toBe(true);
   });
+
+  describe("agent display merging", () => {
+    async function runWithDisplay(
+      display: NonNullable<RunLoopConfig["display"]>,
+      chunkOpts: Parameters<typeof mockChunks>[0] = { content: "hi" }
+    ): Promise<AgentEvent[]> {
+      const events: AgentEvent[] = [];
+      const client = {
+        completeStream: vi.fn(() => mockStream(mockChunks(chunkOpts))),
+      };
+      const cfg = mkConfig({ display, openrouter: client as any });
+      await runLoop(cfg, "ask", {}, collect(events));
+      return events;
+    }
+
+    test("default title (string) is used when phase hooks omit title", async () => {
+      const events = await runWithDisplay({
+        title: "Researcher",
+        success: (r) => ({ content: r.text }),
+      });
+      const start = events.find((e) => e.type === "agent:start");
+      const end = events.find((e) => e.type === "agent:end");
+      expect(start?.display).toEqual({ title: "Researcher", content: undefined });
+      expect(end?.display).toEqual({ title: "Researcher", content: "hi" });
+    });
+
+    test("default title (function) receives the input", async () => {
+      const events = await runWithDisplay({
+        title: (input) => `Working on: ${typeof input === "string" ? input : "(history)"}`,
+      });
+      const start = events.find((e) => e.type === "agent:start");
+      const end = events.find((e) => e.type === "agent:end");
+      expect(start?.display?.title).toBe("Working on: ask");
+      expect(end?.display?.title).toBe("Working on: ask");
+    });
+
+    test("success hook fires only on stopReason === done", async () => {
+      const events = await runWithDisplay({
+        title: "Run",
+        success: (r) => ({ title: "Done", content: r.text }),
+        error: () => ({ title: "Failed" }),
+        end: () => ({ title: "Ended" }),
+      });
+      const end = events.find((e) => e.type === "agent:end");
+      expect(end?.display).toEqual({ title: "Done", content: "hi" });
+    });
+
+    test("end hook fires for non-done, non-error terminals (e.g. length)", async () => {
+      const events = await runWithDisplay(
+        {
+          title: "Run",
+          success: () => ({ title: "Done" }),
+          end: (r) => ({ title: `Ended: ${r.stopReason}` }),
+        },
+        { content: "hi", finish_reason: "length" }
+      );
+      const end = events.find((e) => e.type === "agent:end");
+      expect(end?.display?.title).toBe("Ended: length");
+    });
+
+    test("end hook is fallback when outcome-specific hook is absent", async () => {
+      const events = await runWithDisplay({
+        title: "Run",
+        end: (r) => ({ title: `Done: ${r.stopReason}` }),
+      });
+      const end = events.find((e) => e.type === "agent:end");
+      expect(end?.display?.title).toBe("Done: done");
+    });
+
+    test("a throwing hook does not crash the run; display is omitted", async () => {
+      const events = await runWithDisplay({
+        title: "Run",
+        success: () => { throw new Error("nope"); },
+      });
+      const end = events.find((e) => e.type === "agent:end");
+      expect(end?.display).toBeUndefined();
+      if (end?.type === "agent:end") {
+        expect(end.result.stopReason).toBe("done");
+      }
+    });
+
+    test("no title anywhere emits no display", async () => {
+      const events = await runWithDisplay({
+        success: (r) => ({ content: r.text }),
+      });
+      const start = events.find((e) => e.type === "agent:start");
+      const end = events.find((e) => e.type === "agent:end");
+      expect(start?.display).toBeUndefined();
+      expect(end?.display).toBeUndefined();
+    });
+  });
 });

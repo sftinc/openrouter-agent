@@ -9,7 +9,7 @@ import type { ToolCall } from "../types/index.js";
 import type { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
-import type { AgentEvent, EventEmit } from "./events.js";
+import type { AgentDisplayHooks, AgentEvent, EventDisplay, EventEmit } from "./events.js";
 import { generateId, mergeNumericRecords, buildToolResultMessage, buildToolErrorMessage } from "../lib/index.js";
 
 const FINISH_REASON_TO_STOP: Record<string, Result["stopReason"]> = {
@@ -32,10 +32,7 @@ export interface RunLoopConfig {
     ) => AsyncIterable<CompletionChunk>;
   };
   parentRunId?: string;
-  display?: {
-    start?: (input: string | Message[]) => { title: string; content?: unknown };
-    end?: (result: Result) => { title: string; content?: unknown };
-  };
+  display?: AgentDisplayHooks;
 }
 
 export interface RunLoopOptions {
@@ -121,6 +118,42 @@ function resolveToolDisplay<Args>(
     if (typeof title !== "string") return undefined;
     return { title, content: partial?.content };
   });
+}
+
+/**
+ * Merge an agent display hook's partial output with the display-level `title`
+ * default. `pickHook` selects the phase-specific hook to call. Returns a
+ * fully-resolved `EventDisplay` only if a string `title` can be produced.
+ */
+function resolveAgentDisplay(
+  display: AgentDisplayHooks | undefined,
+  input: string | Message[],
+  pickHook: (d: AgentDisplayHooks) => Partial<EventDisplay> | undefined
+): EventDisplay | undefined {
+  if (!display) return undefined;
+  return safeDisplay(() => {
+    const defaultTitle =
+      typeof display.title === "function" ? display.title(input) : display.title;
+    const partial = pickHook(display);
+    const title = partial?.title ?? defaultTitle;
+    if (typeof title !== "string") return undefined;
+    return { title, content: partial?.content };
+  });
+}
+
+/**
+ * Pick the agent terminal-state hook for a given `Result`. `success` and
+ * `error` apply only to their stopReason; everything else (including
+ * `aborted` and `max_turns`) falls through to `end`. If no specific hook
+ * matches, `end` is the universal fallback.
+ */
+function pickAgentEndHook(
+  display: AgentDisplayHooks,
+  result: Result
+): Partial<EventDisplay> | undefined {
+  if (result.stopReason === "done" && display.success) return display.success(result);
+  if (result.stopReason === "error" && display.error) return display.error(result);
+  return display.end?.(result);
 }
 
 /**
@@ -319,7 +352,7 @@ export async function runLoop(
     runId,
     parentRunId,
     agentName: config.agentName,
-    display: safeDisplay(() => config.display?.start?.(input)),
+    display: resolveAgentDisplay(config.display, input, (d) => d.start?.(input)),
   });
 
   const emitError = (code: number | undefined, message: string): void => {
@@ -517,6 +550,6 @@ export async function runLoop(
     type: "agent:end",
     runId,
     result,
-    display: safeDisplay(() => config.display?.end?.(result)),
+    display: resolveAgentDisplay(config.display, input, (d) => pickAgentEndHook(d, result)),
   });
 }

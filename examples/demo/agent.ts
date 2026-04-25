@@ -112,10 +112,10 @@ const webSearch = new Tool({
 // ---------------------------------------------------------------------------
 
 setOpenRouterClient({
-	model: 'inception/mercury-2',
+	// model: 'inception/mercury-2',
 	max_tokens: 2000,
 	temperature: 0.3,
-	reasoning: { effort: 'high' },
+	// reasoning: { effort: 'high' },
 	title: 'openrouter-agent demo',
 })
 
@@ -140,4 +140,7 @@ export const agent = new Agent({
 	tools: [calculator, currentTime, webSearch],
 	maxTurns: 8,
 	sessionStore,
+	display: {
+		title: 'Demo Assistant',
+	},
 })

@@ -6,6 +6,33 @@ export interface EventDisplay {
 }
 
 /**
+ * Display hooks for an Agent, mirroring `Tool`'s shape. Each hook returns a
+ * `Partial<EventDisplay>` that the loop merges with the `title` default. If
+ * neither the hook nor the default produces a string `title`, no `display`
+ * field is attached to the corresponding event.
+ *
+ * Outcome routing for `agent:end`:
+ *   - `stopReason === "done"`   → `success` (falls back to `end`)
+ *   - `stopReason === "error"`  → `error`   (falls back to `end`)
+ *   - `aborted` / `max_turns` / `length` / `content_filter` → `end`
+ *
+ * If only `end` is supplied, it handles every terminal state. Hooks are
+ * invoked through a try/catch so a throw can't take down the run.
+ */
+export interface AgentDisplayHooks {
+  /**
+   * Default title for both `agent:start` and `agent:end`. Per-phase hooks can
+   * override it by returning their own `title`. A function form receives the
+   * original input passed to `agent.run()`.
+   */
+  title?: string | ((input: string | Message[]) => string);
+  start?: (input: string | Message[]) => Partial<EventDisplay>;
+  success?: (result: Result) => Partial<EventDisplay>;
+  error?: (result: Result) => Partial<EventDisplay>;
+  end?: (result: Result) => Partial<EventDisplay>;
+}
+
+/**
  * The discriminated-union stream emitted by `runLoop` and consumed by
  * `Agent.run()` and display hooks. Discriminate on `event.type`.
  *
