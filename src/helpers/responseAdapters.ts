@@ -103,10 +103,11 @@ export async function pipeEventsToNodeResponse(
   }
   try {
     const iter = serializeEventsAsNDJSON(source)[Symbol.asyncIterator]();
+    const aborted = abort ? abortPromise(abort.signal) : undefined;
     while (true) {
       const next = iter.next();
-      const result = abort
-        ? await Promise.race([next, abortPromise(abort.signal)])
+      const result = aborted
+        ? await Promise.race([next, aborted])
         : await next;
       if (result === ABORTED || result.done) break;
       res.write(result.value);
