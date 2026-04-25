@@ -9,3 +9,4 @@ export { displayOf } from "./displayOf.js";
 export { consumeAgentEvents } from "./consumeEvents.js";
 export type { AgentEventHandlers } from "./consumeEvents.js";
 export { defaultDisplay } from "../agent/events.js";
+export { streamText } from "./streamText.js";

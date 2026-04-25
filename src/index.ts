@@ -237,8 +237,11 @@ export type { SessionStore } from "./session/index.js";
  * - {@link consumeAgentEvents} — typed dispatcher over an
  *   `AsyncIterable<AgentEvent>` that routes each event to a per-variant
  *   handler defined by {@link AgentEventHandlers}.
+ * - {@link streamText} — async-iterable of assistant text chunks; yields
+ *   each `message:delta.text` and falls back to the final assistant message
+ *   when no deltas arrive.
  */
-export { defaultDisplay, displayOf, consumeAgentEvents } from "./helpers/index.js";
+export { defaultDisplay, displayOf, consumeAgentEvents, streamText } from "./helpers/index.js";
 export type { AgentEventHandlers } from "./helpers/index.js";
 /**
  * Agent event vocabulary.
