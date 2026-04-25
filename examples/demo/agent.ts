@@ -180,6 +180,10 @@ export const sessionStore = new InMemorySessionStore()
  * Combines the OpenRouter client (registered above), the three tools, and
  * {@link sessionStore}. The client is picked up implicitly from
  * `setOpenRouterClient` — it is not passed in here.
+ *
+ * Lifecycle events emitted by the run carry server-stamped timing
+ * (`startedAt` / `endedAt` / `elapsedMs`), which `examples/demo/public/chat.js`
+ * uses to render "Completed in Xs" on the activity card.
  */
 export const agent = new Agent({
 	name: 'demo-assistant',
