@@ -1,7 +1,31 @@
+/**
+ * Event vocabulary for the agent module.
+ *
+ * Defines the {@link AgentEvent} discriminated union streamed by
+ * {@link runLoop}, the {@link AgentDisplayHooks} consumed by `Agent` to
+ * decorate events with human-readable titles, the {@link EventDisplay} shape
+ * those hooks resolve to, the {@link EventEmit} callback type used to push
+ * events into the stream, and a {@link defaultDisplay} fallback for
+ * consumers that want a one-line description of any event without writing a
+ * per-variant switch.
+ */
 import type { Message, Result } from "../types/index.js";
 
+/**
+ * A pre-rendered, display-friendly representation of an event. Attached to
+ * most {@link AgentEvent} variants either by the user-supplied
+ * {@link AgentDisplayHooks} / `Tool` display hooks or by
+ * {@link defaultDisplay} as a fallback.
+ */
 export interface EventDisplay {
+  /** Human-readable single-line label for the event (always required). */
   title: string;
+  /**
+   * Optional payload to render alongside the title (for example an error
+   * message, a structured summary, or markdown). Type is intentionally
+   * `unknown` because the loop passes it through opaquely; consumers decide
+   * how to render based on context.
+   */
   content?: unknown;
 }
 
@@ -26,9 +50,27 @@ export interface AgentDisplayHooks {
    * original input passed to `agent.run()`.
    */
   title?: string | ((input: string | Message[]) => string);
+  /**
+   * Called when emitting `agent:start`. Receives the original `agent.run()`
+   * input. Return any subset of {@link EventDisplay} fields to override or
+   * augment the default title.
+   */
   start?: (input: string | Message[]) => Partial<EventDisplay>;
+  /**
+   * Called when emitting `agent:end` with `stopReason === "done"`. If
+   * omitted, the loop falls back to {@link AgentDisplayHooks.end}.
+   */
   success?: (result: Result) => Partial<EventDisplay>;
+  /**
+   * Called when emitting `agent:end` with `stopReason === "error"`. If
+   * omitted, the loop falls back to {@link AgentDisplayHooks.end}.
+   */
   error?: (result: Result) => Partial<EventDisplay>;
+  /**
+   * Universal terminal-state hook. Used for `aborted`, `max_turns`,
+   * `length`, `content_filter`, and as the fallback for `done` / `error`
+   * when their dedicated hooks aren't supplied.
+   */
   end?: (result: Result) => Partial<EventDisplay>;
 }
 
@@ -61,64 +103,114 @@ export interface AgentDisplayHooks {
  */
 export type AgentEvent =
   | {
+      /** Discriminator: marks the start of a run. */
       type: "agent:start";
+      /** Unique id for this run. Stable for the lifetime of one `runLoop` invocation. */
       runId: string;
+      /**
+       * Run id of the enclosing parent run, when this run is a subagent
+       * invocation. Undefined for top-level runs.
+       */
       parentRunId?: string;
+      /** Name of the agent being started, taken from `RunLoopConfig.agentName`. */
       agentName: string;
+      /** Resolved display payload from the agent's `start` hook, if any. */
       display?: EventDisplay;
     }
   | {
+      /** Discriminator: marks the terminal event of a run. */
       type: "agent:end";
+      /** Unique id of the run that just ended. Matches the prior `agent:start`. */
       runId: string;
+      /** Final {@link Result} including stop reason, accumulated usage, and full message log. */
       result: Result;
+      /** Resolved display payload from the agent's terminal hook (`success` / `error` / `end`), if any. */
       display?: EventDisplay;
     }
   | {
+      /** Discriminator: incremental token output from the assistant. */
       type: "message:delta";
+      /** Run id this delta belongs to. */
       runId: string;
+      /** Newly arrived text since the previous delta. NOT a cumulative buffer. */
       text: string;
     }
   | {
+      /** Discriminator: a complete assistant message (possibly with `tool_calls`). */
       type: "message";
+      /** Run id this message belongs to. */
       runId: string;
+      /** The full assistant {@link Message} as it was appended to the conversation. */
       message: Message;
+      /** Reserved for future per-message display rendering; currently unused by the loop. */
       display?: EventDisplay;
     }
   | {
+      /** Discriminator: a tool invocation has started. */
       type: "tool:start";
+      /** Run id this tool call belongs to. */
       runId: string;
+      /** Stable identifier for this tool invocation, used to correlate with `tool:end` (and any `tool:progress`). */
       toolUseId: string;
+      /** Name of the tool as registered on the agent. */
       toolName: string;
+      /** Best-effort parsed JSON args. Falls back to `{}` if argument parsing failed. */
       input: unknown;
+      /** Resolved display payload from the tool's `start` hook, if any. */
       display?: EventDisplay;
     }
   | {
+      /** Discriminator: optional progress signal a tool may emit manually via `deps.emit`. The loop never produces this on its own. */
       type: "tool:progress";
+      /** Run id this tool call belongs to. */
       runId: string;
+      /** Identifier matching the originating `tool:start`. */
       toolUseId: string;
+      /** Milliseconds since the tool started, as reported by the tool. */
       elapsedMs: number;
+      /** Optional display payload supplied by the tool. */
       display?: EventDisplay;
     }
   | {
+      /** Discriminator: a tool invocation completed successfully. */
       type: "tool:end";
+      /** Run id this tool call belongs to. */
       runId: string;
+      /** Identifier matching the originating `tool:start`. */
       toolUseId: string;
+      /** Tool result content (the same value passed back to the model in the `tool` role message). */
       output: unknown;
+      /** Optional structured metadata returned by the tool, surfaced for telemetry/UI. */
       metadata?: Record<string, unknown>;
+      /** Resolved display payload from the tool's `success` hook, if any. */
       display?: EventDisplay;
     }
   | {
+      /** Discriminator: a tool invocation failed. Distinguish from the success variant via `"error" in event`. */
       type: "tool:end";
+      /** Run id this tool call belongs to. */
       runId: string;
+      /** Identifier matching the originating `tool:start`. */
       toolUseId: string;
+      /** Human-readable error message; this same string is sent back to the model. */
       error: string;
+      /** Optional structured metadata captured alongside the error. */
       metadata?: Record<string, unknown>;
+      /** Resolved display payload from the tool's `error` hook, if any. */
       display?: EventDisplay;
     }
   | {
+      /** Discriminator: a run-fatal error. Always immediately precedes an `agent:end` with `stopReason: "error"`. */
       type: "error";
+      /** Run id this error belongs to. */
       runId: string;
+      /**
+       * Error envelope. `code` is included only when the underlying provider
+       * supplied one (typically an HTTP-style status). `message` is always
+       * present.
+       */
       error: { code?: number; message: string };
+      /** Reserved for future error-level display rendering; currently unused by the loop. */
       display?: EventDisplay;
     };
 
@@ -127,10 +219,18 @@ export type AgentEvent =
  * Consumers should prefer `event.display` if set:
  * `event.display ?? defaultDisplay(event)`.
  *
- * @param event Any `AgentEvent`.
- * @returns An `EventDisplay` with a human-readable title (and optional
+ * @param event Any {@link AgentEvent}.
+ * @returns An {@link EventDisplay} with a human-readable title (and optional
  *   content, for errors only). Callers can use this to render a progress
  *   line in a UI without handling every event variant explicitly.
+ *
+ * @example
+ * ```ts
+ * for await (const ev of agent.run("hello")) {
+ *   const { title, content } = ev.display ?? defaultDisplay(ev);
+ *   console.log(title);
+ * }
+ * ```
  */
 export function defaultDisplay(event: AgentEvent): EventDisplay {
   switch (event.type) {
@@ -153,4 +253,12 @@ export function defaultDisplay(event: AgentEvent): EventDisplay {
   }
 }
 
+/**
+ * Synchronous callback that pushes an {@link AgentEvent} into a consumer
+ * (typically an {@link AgentRun} buffer or a parent agent's event stream).
+ * Intentionally fire-and-forget: emitters never await delivery, and
+ * implementations must not throw.
+ *
+ * @param event The event to deliver.
+ */
 export type EventEmit = (event: AgentEvent) => void;

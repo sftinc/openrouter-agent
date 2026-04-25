@@ -1,3 +1,13 @@
+/**
+ * `runLoop` — the streaming agent driver.
+ *
+ * Implements the per-turn cycle: stream a completion, accumulate tool-call
+ * deltas, emit lifecycle events, dispatch tool invocations, persist sessions
+ * transactionally on clean termination, and produce a final {@link Result}.
+ *
+ * This module is the lower-level engine behind {@link Agent.run}. Most
+ * consumers should use `Agent` rather than calling `runLoop` directly.
+ */
 import type { Message, Result, Usage } from "../types/index.js";
 import type {
   CompletionChunk,
@@ -12,50 +22,129 @@ import type { SessionStore } from "../session/index.js";
 import type { AgentDisplayHooks, AgentEvent, EventDisplay, EventEmit } from "./events.js";
 import { generateId, mergeNumericRecords, buildToolResultMessage, buildToolErrorMessage } from "../lib/index.js";
 
+/**
+ * Mapping from OpenRouter `finish_reason` values that indicate a clean,
+ * non-tool-call termination to our internal {@link Result.stopReason}. The
+ * `tool_calls` finish reason is intentionally absent: when tool calls are
+ * present the loop continues for another turn rather than stopping.
+ */
 const FINISH_REASON_TO_STOP: Record<string, Result["stopReason"]> = {
   stop: "done",
   length: "length",
   content_filter: "content_filter",
 };
 
+/**
+ * Static configuration for a {@link runLoop} invocation. Built once per
+ * Agent.run call by {@link Agent} and held constant for the lifetime of
+ * the loop.
+ */
 export interface RunLoopConfig {
+  /** Agent name reported on `agent:start` events and used in default display titles. */
   agentName: string;
+  /** Default system prompt; overridable per-run via {@link RunLoopOptions.system}. */
   systemPrompt?: string;
+  /** Base OpenRouter client overrides (model, temperature, provider routing, etc.). */
   client: LLMConfig;
+  /** Registered tools. Empty array if the agent has no tools. */
   tools: Tool<any>[];
+  /** Cap on LLM-call/tool-execution cycles. Hitting it terminates with `stopReason: "max_turns"`. */
   maxTurns: number;
+  /** Optional session backing store; required only when callers also pass `sessionId`. */
   sessionStore?: SessionStore;
+  /**
+   * The OpenRouter streaming surface. Structurally typed — tests and other
+   * environments can supply a mock implementing only `completeStream`.
+   */
   openrouter: {
+    /**
+     * Issue a streaming completion. Must yield chunks in OpenRouter's SSE
+     * shape (see {@link CompletionChunk}). The optional `signal` aborts the
+     * underlying HTTP request when the run is cancelled.
+     */
     completeStream: (
       request: { messages: Message[]; tools?: OpenRouterTool[] } & LLMConfig,
       signal?: AbortSignal
     ) => AsyncIterable<CompletionChunk>;
   };
+  /**
+   * Outer run id when this run is a subagent invocation. Reported on the
+   * resulting `agent:start` event so consumers can reconstruct the run tree.
+   */
   parentRunId?: string;
+  /** Optional display hooks merged into lifecycle events. */
   display?: AgentDisplayHooks;
 }
 
+/**
+ * Per-call options for {@link runLoop}. All fields are optional and may
+ * override values from {@link RunLoopConfig}.
+ */
 export interface RunLoopOptions {
+  /**
+   * If set, the run resumes the conversation persisted under this id (loaded
+   * from {@link RunLoopConfig.sessionStore}) and writes back on a clean
+   * terminal stop reason.
+   */
   sessionId?: string;
+  /**
+   * Override for the system prompt. Wins over both
+   * {@link RunLoopConfig.systemPrompt} and any `system` message embedded in
+   * an `input: Message[]`.
+   */
   system?: string;
+  /**
+   * Optional cancellation signal. When aborted, the loop terminates with
+   * `stopReason: "aborted"` and skips session persistence.
+   */
   signal?: AbortSignal;
+  /** Per-call override for {@link RunLoopConfig.maxTurns}. */
   maxTurns?: number;
+  /** Per-call OpenRouter overrides; merged on top of {@link RunLoopConfig.client}. */
   client?: LLMConfig;
+  /** Outer run id when this run is a subagent invocation. Wins over {@link RunLoopConfig.parentRunId}. */
   parentRunId?: string;
 }
 
+/**
+ * Generate a fresh run id with the `run-` prefix.
+ *
+ * @returns A new opaque id suitable for `runId` on {@link AgentEvent}s.
+ */
 function newRunId(): string {
   return generateId("run-");
 }
 
+/**
+ * Resolve a tool-use id, preferring the id supplied by the model and
+ * falling back to a generated `tu-` prefixed one when missing or empty.
+ *
+ * @param fallback The id from the model's `tool_call.id`. May be empty.
+ * @returns A non-empty stable identifier for one tool invocation.
+ */
 function newToolUseId(fallback: string): string {
   return fallback || generateId("tu-");
 }
 
+/**
+ * Construct a zero-initialized {@link Usage} accumulator.
+ *
+ * @returns A `Usage` with all token counts at `0` and no optional fields.
+ */
 function zeroUsage(): Usage {
   return { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 }
 
+/**
+ * Sum two {@link Usage} values, merging structured detail records and
+ * carrying through optional fields (`cost`, `is_byok`, `*_details`).
+ *
+ * @param a The running total. Returned unchanged if `b` is `undefined`.
+ * @param b The increment to add. May be `undefined` (no-op).
+ * @returns A new `Usage` representing `a + b`. `cost` resolves to
+ *   `undefined` when both sides contributed zero (avoids reporting a
+ *   spurious `0` cost).
+ */
 function addUsage(a: Usage, b: Usage | undefined): Usage {
   if (!b) return a;
   return {
@@ -72,6 +161,19 @@ function addUsage(a: Usage, b: Usage | undefined): Usage {
 }
 
 
+/**
+ * Coerce an arbitrary tool return value into a structured {@link ToolResult}.
+ *
+ * Accepts:
+ * - A bare string (treated as `content`).
+ * - An object with `error: string` (treated as a tool failure; preserves `metadata`).
+ * - An object with `content` (preserves `metadata`).
+ * - Anything else (treated as opaque `content`).
+ *
+ * @param raw The raw value returned by `Tool.execute`.
+ * @returns A normalized {@link ToolResult} suitable for the loop to emit
+ *   and forward to the model.
+ */
 function normalizeToolResult(raw: unknown): ToolResult {
   if (typeof raw === "string") return { content: raw };
   if (raw !== null && typeof raw === "object") {
@@ -89,6 +191,14 @@ function normalizeToolResult(raw: unknown): ToolResult {
   return { content: raw };
 }
 
+/**
+ * Run a display-resolution callback under a try/catch so a buggy hook can
+ * never take down the surrounding run.
+ *
+ * @template T Return type of the wrapped callback.
+ * @param fn Callback that may throw.
+ * @returns The callback's return value, or `undefined` if it threw.
+ */
 function safeDisplay<T>(fn: () => T): T | undefined {
   try {
     return fn();
@@ -102,6 +212,15 @@ function safeDisplay<T>(fn: () => T): T | undefined {
  * default. Returns a fully-resolved `EventDisplay` with a string title, or
  * undefined if no title can be produced. All hook calls are wrapped in a
  * try/catch so a throwing display hook can't take down the run.
+ *
+ * @template Args The tool's validated argument type.
+ * @param tool The tool whose `display` hooks should be consulted. May be
+ *   `undefined` (e.g. for an unknown tool name) — returns `undefined`.
+ * @param args The validated tool arguments, threaded into hook callbacks.
+ * @param pickHook Selector that picks the phase-specific hook (`start`,
+ *   `success`, `error`) from the tool's display config.
+ * @returns A fully-resolved {@link EventDisplay}, or `undefined` if no
+ *   string title could be produced or any hook threw.
  */
 function resolveToolDisplay<Args>(
   tool: Tool<Args> | undefined,
@@ -124,6 +243,15 @@ function resolveToolDisplay<Args>(
  * Merge an agent display hook's partial output with the display-level `title`
  * default. `pickHook` selects the phase-specific hook to call. Returns a
  * fully-resolved `EventDisplay` only if a string `title` can be produced.
+ *
+ * @param display The agent's display hooks. May be `undefined` — returns
+ *   `undefined` immediately.
+ * @param input The original `agent.run()` input, threaded into the
+ *   `title` function form and `start` hook.
+ * @param pickHook Selector that picks the phase-specific hook
+ *   (`start`, `success`, `error`, `end`) from the display config.
+ * @returns A fully-resolved {@link EventDisplay}, or `undefined` if no
+ *   string title could be produced or any hook threw.
  */
 function resolveAgentDisplay(
   display: AgentDisplayHooks | undefined,
@@ -146,6 +274,11 @@ function resolveAgentDisplay(
  * `error` apply only to their stopReason; everything else (including
  * `aborted` and `max_turns`) falls through to `end`. If no specific hook
  * matches, `end` is the universal fallback.
+ *
+ * @param display The agent's display hooks (already known to be defined).
+ * @param result The terminal {@link Result} being reported.
+ * @returns The partial display payload from the chosen hook, or
+ *   `undefined` if no applicable hook is configured.
  */
 function pickAgentEndHook(
   display: AgentDisplayHooks,
@@ -161,6 +294,20 @@ function pickAgentEndHook(
  * executes the tool, normalizes the result, emits start/end events, and
  * returns the `role: "tool"` message to append to the conversation.
  * Extracted from runLoop's main loop so the per-turn flow stays readable.
+ *
+ * Side effects: emits exactly one `tool:start` and one `tool:end` event on
+ * `emit`. Logs the result to stderr when `OPENROUTER_DEBUG` is set.
+ *
+ * @param toolCall The OpenRouter tool-call shape from the assistant message,
+ *   carrying the model-supplied id and JSON-string arguments.
+ * @param toolByName Lookup of registered tools by name. An entry missing
+ *   here surfaces as a `"tool ... is not registered"` error to the model.
+ * @param deps Tool dependencies (signal, runId, parent emit, completion
+ *   helpers) forwarded to `Tool.execute`.
+ * @param runId The current run id, copied onto emitted events.
+ * @param emit The event sink for the run.
+ * @returns The `role: "tool"` {@link Message} to append to the conversation
+ *   for the model to consume on the next turn.
  */
 async function executeToolCall(
   toolCall: { id: string; function: { name: string; arguments: string } },
@@ -238,6 +385,25 @@ async function executeToolCall(
   return buildToolResultMessage(toolCall.id, out);
 }
 
+/**
+ * Compute the initial conversation state for a run: the resolved system
+ * prompt and the seed message list (session history + new input, with
+ * embedded system messages stripped from both).
+ *
+ * Precedence for the system prompt: `systemOverride` > embedded system
+ * message in `input` (when `input` is `Message[]`) > `systemFromConfig`.
+ *
+ * @param input Either the user prompt string or a seeded message list.
+ * @param systemOverride Per-call system override from
+ *   {@link RunLoopOptions.system}.
+ * @param systemFromConfig Default system prompt from
+ *   {@link RunLoopConfig.systemPrompt}.
+ * @param sessionMessages Persisted prior messages from the session store,
+ *   or `null` if no session is in use.
+ * @returns The resolved `system` content and the ordered `messages` array
+ *   to seed the loop with (no system-role messages — the system prompt is
+ *   prepended only on the wire).
+ */
 function resolveInitialMessages(
   input: string | Message[],
   systemOverride: string | undefined,
@@ -275,6 +441,14 @@ function resolveInitialMessages(
   return { system: systemContent, messages };
 }
 
+/**
+ * Find the most recent assistant text message in the conversation.
+ *
+ * @param messages The full message log.
+ * @returns The string content of the last `assistant`-role message whose
+ *   `content` is a string, or `""` if none exist (e.g. the assistant only
+ *   produced tool calls).
+ */
 function lastAssistantText(messages: Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -285,6 +459,18 @@ function lastAssistantText(messages: Message[]): string {
   return "";
 }
 
+/**
+ * Fold one streaming tool-call delta into the per-index buffer. The
+ * provider sends fragments (id once, name once, arguments in many chunks)
+ * keyed by `index`; this function reassembles them into a single
+ * {@link ToolCallDelta} per index.
+ *
+ * Mutates `buf` in place. Argument fragments are concatenated; first-seen
+ * `id` and `type` win.
+ *
+ * @param buf Per-index buffer keyed by the model-supplied tool call index.
+ * @param delta The incoming streamed fragment to merge.
+ */
 function mergeToolCallDelta(
   buf: Map<number, ToolCallDelta>,
   delta: ToolCallDelta
@@ -315,6 +501,19 @@ function mergeToolCallDelta(
   }
 }
 
+/**
+ * Convert the per-index merge buffer into a flat, ordered list of
+ * {@link ToolCall}s ready to attach to the assistant message and dispatch.
+ *
+ * Order: ascending by the original `index` from the provider stream.
+ * Missing `id`, `type`, `function.name`, or `function.arguments` are
+ * defaulted so the structure always type-checks (downstream code handles
+ * empty values defensively).
+ *
+ * @param buf Per-index buffer populated by {@link mergeToolCallDelta}.
+ * @returns Ordered, fully-shaped tool call array. Empty when no tool calls
+ *   were produced this turn.
+ */
 function assembleToolCalls(buf: Map<number, ToolCallDelta>): ToolCall[] {
   const out: ToolCall[] = [];
   const indices = [...buf.keys()].sort((a, b) => a - b);
@@ -332,6 +531,41 @@ function assembleToolCalls(buf: Map<number, ToolCallDelta>): ToolCall[] {
   return out;
 }
 
+/**
+ * Execute one full agent run from start to terminal `agent:end`.
+ *
+ * Lifecycle:
+ *  1. Emit `agent:start` with the assigned `runId`.
+ *  2. Load prior session messages (if `sessionId` and `sessionStore` are set).
+ *  3. Loop up to `maxTurns` times:
+ *     - Stream a completion, accumulating content and tool-call deltas.
+ *     - Emit `message:delta` per text chunk and a final `message` for the
+ *       assembled assistant message.
+ *     - On per-chunk error or finish_reason `"error"`: terminate with
+ *       `stopReason: "error"`.
+ *     - On clean finish_reason mapped via {@link FINISH_REASON_TO_STOP}:
+ *       terminate with that reason.
+ *     - Otherwise dispatch each tool call via {@link executeToolCall},
+ *       append the tool messages, and continue.
+ *  4. If the loop exits without setting `stopReason`, terminate with
+ *     `"max_turns"`.
+ *  5. On a clean stop reason (`done` / `max_turns` / `length` /
+ *     `content_filter`), persist the conversation back to the session
+ *     store. On `error` or `aborted`, the session is left untouched so the
+ *     client can safely retry with the same input.
+ *  6. Emit `agent:end` with the final {@link Result}.
+ *
+ * Cancellation: the loop respects `options.signal`. An aborted run
+ * terminates with `stopReason: "aborted"` (no `error` event is emitted).
+ *
+ * @param config Static run configuration assembled by {@link Agent}.
+ * @param input Either a user prompt string or a seed message list.
+ * @param options Per-call overrides; see {@link RunLoopOptions}.
+ * @param emit Event sink. Must accept events synchronously and not throw.
+ * @returns A promise that resolves once the terminal `agent:end` has been
+ *   emitted. The promise itself never rejects for run-level errors —
+ *   errors are reported via the `error` and `agent:end` events.
+ */
 export async function runLoop(
   config: RunLoopConfig,
   input: string | Message[],
