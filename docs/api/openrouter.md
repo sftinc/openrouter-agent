@@ -1,6 +1,6 @@
 # OpenRouter Client (`src/openrouter/`)
 
-This folder owns the package's transport layer: a thin, typed HTTP client for OpenRouter's `/chat/completions` endpoint, the wire-shape types that mirror OpenRouter's request/response schema, a project-singleton registry so every `Agent` shares one client, a small SSE parser used by streaming completions, and (forthcoming) a connection-level retry helper that handles transient HTTP failures before any chunks are yielded. Higher-level concerns (the agent loop, tool execution, sessions) live elsewhere; this folder stays minimal — no queueing, no rate limiting. The pre-release client performs no retries; the retry surface (`RetryConfig`, `defaultIsRetryable`, `StreamTruncatedError`, `IdleTimeoutError`) ships in a follow-up release per the spec at `docs/superpowers/specs/2026-04-26-llm-retry-design.md`. See `src/openrouter/client.ts:14-17` for the original design statement.
+This folder owns the package's transport layer: a thin, typed HTTP client for OpenRouter's `/chat/completions` endpoint, the wire-shape types that mirror OpenRouter's request/response schema, a project-singleton registry so every `Agent` shares one client, a small SSE parser used by streaming completions, and a connection-level retry helper (`src/openrouter/retry.ts`) that handles transient HTTP failures before any chunks are yielded. Higher-level concerns (the agent loop, tool execution, sessions) live elsewhere; this folder stays minimal — no queueing, no rate limiting. The retry surface (`RetryConfig`, `defaultIsRetryable`, `StreamTruncatedError`, `IdleTimeoutError`, `RetryableProviderError`) is fully shipped and exported from the package root.
 
 The folder's own re-export surface lives in `src/openrouter/index.ts`. The package root (`src/index.ts`) re-exports a curated subset of these for external consumers; symbols that are folder-exported but not package-exported are listed under "Internal helpers" at the bottom.
 
@@ -27,7 +27,7 @@ import {
 } from "@sftinc/openrouter-agent";
 ```
 
-`StreamTruncatedError`, `IdleTimeoutError`, `defaultIsRetryable`, and `RetryConfig` are part of the planned retry surface and are not present in the pre-release build — see [Retry surface](#retry-surface) at the bottom of this page.
+`StreamTruncatedError`, `IdleTimeoutError`, `defaultIsRetryable`, and `RetryConfig` are part of the retry surface — see [Retry surface](#retry-surface) at the bottom of this page for full documentation.
 
 All examples below assume that import path. Internal callers inside this repo import from the folder index (`./openrouter`), per the project convention in `CLAUDE.md`.
 
@@ -213,16 +213,14 @@ POSTs a streaming chat completion and yields parsed SSE `CompletionChunk` values
 - `OpenRouterError` on non-2xx responses (thrown before any chunks are yielded).
 - `OpenRouterError` with a `"streaming response had no body"` message when the response is OK but `response.body` is `null` (`src/openrouter/client.ts:266-271`).
 - Re-throws any error from the SSE parser (e.g. malformed JSON in a `data:` frame).
-- (Forthcoming) `StreamTruncatedError` when the SSE body ends without a `[DONE]` sentinel and without a terminal `finish_reason`. Replaces today's silent treat-as-EOF behavior at `src/openrouter/sse.ts:78-89`.
-- (Forthcoming) `IdleTimeoutError` when no chunk arrives within the configured `idleTimeoutMs` window. Both new error types abort the underlying `fetch` before throwing so the socket is freed.
+- `StreamTruncatedError` when the SSE body ends without a `[DONE]` sentinel and without a terminal `finish_reason`. Aborts the underlying `fetch` before throwing so the socket is freed.
+- `IdleTimeoutError` when no chunk arrives within the configured `idleTimeoutMs` window. Aborts the underlying `fetch` before throwing so the socket is freed.
 
 #### Retry behavior
 
-> **Forthcoming.** Pre-release behavior performs zero retries.
-
 When called via `Agent.run`, `completeStream` participates in a per-turn `RetryBudget` for **connection-level** failures: `fetch` rejections (DNS, ECONNRESET, ECONNREFUSED, ETIMEDOUT, TLS) and retryable response statuses (`408`, `429`, `500`, `502`, `503`, `504`). Each retry honors `Retry-After` (capped at the configured `maxDelayMs`) and uses exponential backoff with full jitter. Stream-level failures (`StreamTruncatedError`, `IdleTimeoutError`, mid-stream provider errors) are retried by the loop layer, not by `completeStream` — see [agent.md `Retry behavior`](./agent.md#retry-behavior). The same budget is shared across both layers; budgets do **not** compound.
 
-Direct callers of `OpenRouterClient.completeStream` (without `Agent`) get connection-level retries with the default `RetryConfig`. To opt out, construct the client with `{ retry: { maxAttempts: 1 } }` (forthcoming option on `OpenRouterClientOptions`).
+Direct callers of `OpenRouterClient.completeStream` (without `Agent`) get connection-level retries with the default `RetryConfig`. To opt out, construct the client with `{ retry: { maxAttempts: 1 } }`.
 
 #### Side effects
 
@@ -258,19 +256,19 @@ class OpenRouterError extends Error {
   readonly code: number;
   readonly body?: unknown;
   readonly metadata?: Record<string, unknown>;
-  readonly retryAfterMs?: number;   // forthcoming
+  readonly retryAfterMs?: number;
 
   constructor(params: {
     code: number;
     message: string;
     body?: unknown;
     metadata?: Record<string, unknown>;
-    retryAfterMs?: number;          // forthcoming
+    retryAfterMs?: number;
   });
 }
 ```
 
-Source: `src/openrouter/client.ts:55-77`. The `retryAfterMs` field is part of the [Retry surface](#retry-surface) and lands in a follow-up release; it is parsed from the `Retry-After` response header (HTTP-date or seconds form). Used by the retry helper as a lower bound on the next backoff delay.
+Source: `src/openrouter/client.ts:55-77`. The `retryAfterMs` field is parsed from the `Retry-After` response header (HTTP-date or seconds form). Used by the retry helper as a lower bound on the next backoff delay.
 
 ### Constructor parameters
 
@@ -696,9 +694,7 @@ The three variants of `OpenRouterTool`. These are folder-level exports (re-expor
 
 ## Retry surface
 
-> **Forthcoming.** This section documents the planned retry exports per the spec at `docs/superpowers/specs/2026-04-26-llm-retry-design.md`. None of the symbols below are present in the pre-release build; the current build performs zero retries.
-
-The retry surface lives in `src/openrouter/retry.ts` (planned) and `src/openrouter/errors.ts` (planned, or extension of the existing module).
+The retry surface lives in `src/openrouter/retry.ts` and `src/openrouter/errors.ts`.
 
 ### `RetryConfig`
 

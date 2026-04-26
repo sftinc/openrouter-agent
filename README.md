@@ -114,8 +114,6 @@ For the full event vocabulary (`agent:start`, `message`, `message:delta`, `tool:
 
 ## Reliability and retries
 
-> **Status — forthcoming.** The retry surface described below is the agreed design (spec: [`docs/superpowers/specs/2026-04-26-llm-retry-design.md`](./docs/superpowers/specs/2026-04-26-llm-retry-design.md)). Implementation lands in a follow-up release; pre-release behavior is one attempt per LLM call with no built-in retries — the current default of `maxAttempts: 1` reproduces today's behavior exactly.
-
 Each LLM call inside a turn is retried automatically for transient failures, but only while it is still safe to do so. The boundary is **the first content delta** — once any `message:delta` has been emitted to the client for the current turn, the call is committed. Failures before that point may retry; failures after that point surface as `stopReason: "error"` (and the session is not persisted, so the same input can still be retried by the caller).
 
 What retries cover, by default:
