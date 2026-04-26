@@ -1,9 +1,11 @@
 /**
  * @file Retry helpers for the OpenRouter transport layer.
  *
- * This file will grow to include the full retry helper (`withRetry`,
- * `RetryBudget`), the `RetryConfig` shape, and the `defaultIsRetryable`
- * predicate. For Task 2, only `parseRetryAfter` lands.
+ * Exports: `parseRetryAfter` (Retry-After header parser), `defaultIsRetryable`
+ * (error predicate), `RetryConfig` type, `DEFAULT_RETRY_CONFIG`, and
+ * `resolveRetryConfig` (config resolver). Also exports `abortableSleep`,
+ * `RetryBudget`, `createRetryBudget`, `withRetry`, and `computeBackoffDelay`
+ * for cooperative full-jitter exponential backoff with per-turn budget sharing.
  */
 
 import { OpenRouterError } from './client.js'
@@ -153,5 +155,194 @@ export function resolveRetryConfig(cfg: RetryConfig | undefined): Required<Retry
 		maxDelayMs: cfg?.maxDelayMs ?? DEFAULT_RETRY_CONFIG.maxDelayMs,
 		idleTimeoutMs: cfg?.idleTimeoutMs ?? DEFAULT_RETRY_CONFIG.idleTimeoutMs,
 		isRetryable: cfg?.isRetryable ?? DEFAULT_RETRY_CONFIG.isRetryable,
+	}
+}
+
+/**
+ * Resolves after `delayMs` milliseconds, or rejects with an `AbortError` if
+ * `signal` fires first. Used by {@link withRetry} for cooperative backoff.
+ *
+ * @param delayMs Milliseconds to wait. May be `0`.
+ * @param signal Optional cancellation signal.
+ * @returns A promise that resolves with `void` on timer or rejects with an
+ *   `AbortError` (`Error` with `name === "AbortError"`) on signal.
+ *
+ * @example
+ * ```ts
+ * import { abortableSleep } from './openrouter'
+ *
+ * const ctrl = new AbortController()
+ * await abortableSleep(1000, ctrl.signal)
+ * ```
+ */
+export function abortableSleep(delayMs: number, signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) {
+		return Promise.reject(makeAbortError())
+	}
+	return new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			signal?.removeEventListener('abort', onAbort)
+			resolve()
+		}, delayMs)
+		const onAbort = () => {
+			clearTimeout(timer)
+			reject(makeAbortError())
+		}
+		signal?.addEventListener('abort', onAbort, { once: true })
+	})
+}
+
+/**
+ * Construct an Error with `name === "AbortError"`. Used by
+ * {@link abortableSleep} when the signal fires.
+ */
+function makeAbortError(): Error {
+	const err = new Error('Aborted')
+	err.name = 'AbortError'
+	return err
+}
+
+/**
+ * Mutable per-turn retry budget. The agent loop allocates one of these per
+ * turn and shares it with the OpenRouter client so the two retry layers do
+ * not compound. Decrementing happens immediately before scheduling a retry.
+ */
+export interface RetryBudget {
+	/** Attempts remaining (excluding the in-flight one). Decremented as retries fire. */
+	remaining: number
+	/** Total attempts allowed for this turn. Set once at creation. */
+	readonly total: number
+}
+
+/**
+ * Build a fresh {@link RetryBudget} from a resolved config. `remaining`
+ * starts at `maxAttempts - 1` because the first attempt is "free" — the
+ * budget governs the *retries*, not the total attempts.
+ *
+ * @param cfg Resolved retry config (use {@link resolveRetryConfig} first).
+ * @returns A new budget. Mutate the returned object directly.
+ *
+ * @example
+ * ```ts
+ * import { createRetryBudget, resolveRetryConfig } from './openrouter'
+ *
+ * const cfg = resolveRetryConfig(undefined)
+ * const budget = createRetryBudget(cfg)
+ * ```
+ */
+export function createRetryBudget(cfg: Required<RetryConfig>): RetryBudget {
+	return { remaining: Math.max(0, cfg.maxAttempts - 1), total: cfg.maxAttempts }
+}
+
+/**
+ * Information passed to the optional `onRetry` callback.
+ */
+export interface RetryAttemptInfo {
+	/** One-based; the attempt that just failed. The next attempt will be `attempt + 1`. */
+	attempt: number
+	/** Computed backoff delay until the next attempt, in ms. */
+	delayMs: number
+	/** The retryable error that just fired. */
+	error: unknown
+}
+
+/**
+ * Options accepted by {@link withRetry}.
+ */
+export interface WithRetryOptions {
+	/** Mutable budget shared across retry layers. Decremented per retry. */
+	budget: RetryBudget
+	/** Resolved config used for backoff math and the `isRetryable` predicate. */
+	config: Required<RetryConfig>
+	/** Optional cancellation signal. Aborts during backoff sleep give up immediately. */
+	signal?: AbortSignal
+	/** Optional callback invoked once per failed retryable attempt, before the backoff sleep. */
+	onRetry?: (info: RetryAttemptInfo) => void
+	/** Override the random source for backoff jitter (deterministic tests). */
+	random?: () => number
+	/** Override the sleep implementation (deterministic tests). */
+	sleep?: (delayMs: number, signal?: AbortSignal) => Promise<void>
+}
+
+/**
+ * Compute the next backoff delay for a given attempt number.
+ *
+ * Full-jitter exponential: `delayMs = random(0, min(maxDelayMs, initialDelayMs * 2^(attempt-1)))`.
+ * Floored by `retryAfterMs` (if any) and re-capped at `maxDelayMs`.
+ *
+ * @param attempt One-based attempt that just failed.
+ * @param config Resolved retry config.
+ * @param retryAfterMs Optional floor from a `Retry-After` header.
+ * @param random RNG, defaults to `Math.random`.
+ * @returns Delay in ms, in `[0, maxDelayMs]`.
+ *
+ * @example
+ * ```ts
+ * import { computeBackoffDelay, resolveRetryConfig } from './openrouter'
+ *
+ * const cfg = resolveRetryConfig(undefined)
+ * const delay = computeBackoffDelay(1, cfg, undefined)
+ * ```
+ */
+export function computeBackoffDelay(
+	attempt: number,
+	config: Required<RetryConfig>,
+	retryAfterMs: number | undefined,
+	random: () => number = Math.random,
+): number {
+	const exp = Math.min(config.maxDelayMs, config.initialDelayMs * 2 ** Math.max(0, attempt - 1))
+	let delay = Math.floor(random() * exp)
+	if (retryAfterMs != null) delay = Math.max(delay, retryAfterMs)
+	return Math.min(delay, config.maxDelayMs)
+}
+
+/**
+ * Run `fn` and retry on retryable errors until it succeeds, the budget is
+ * exhausted, the error is non-retryable, or `signal` fires.
+ *
+ * @template T Return type of `fn`.
+ * @param fn The async function to attempt. Receives the one-based attempt
+ *   number; useful for logging.
+ * @param options See {@link WithRetryOptions}.
+ * @returns The successful result of `fn`.
+ * @throws Whatever `fn` threw on the final attempt (non-retryable error,
+ *   budget-exhaustion error, or `AbortError`).
+ *
+ * @example
+ * ```ts
+ * import { withRetry, createRetryBudget, resolveRetryConfig } from './openrouter'
+ *
+ * const config = resolveRetryConfig(undefined)
+ * const budget = createRetryBudget(config)
+ * const data = await withRetry(() => fetchSomething(), {
+ *   budget,
+ *   config,
+ *   onRetry: (info) => console.warn('retry', info.attempt, info.delayMs),
+ * })
+ * ```
+ */
+export async function withRetry<T>(
+	fn: (attempt: number) => Promise<T>,
+	options: WithRetryOptions,
+): Promise<T> {
+	const { budget, config, signal, onRetry } = options
+	const random = options.random ?? Math.random
+	const sleep = options.sleep ?? abortableSleep
+	let attempt = 0
+	while (true) {
+		attempt++
+		try {
+			return await fn(attempt)
+		} catch (err) {
+			if (signal?.aborted) throw err
+			if (!config.isRetryable(err)) throw err
+			if (budget.remaining <= 0) throw err
+			const retryAfterMs =
+				err instanceof OpenRouterError ? err.retryAfterMs : undefined
+			const delayMs = computeBackoffDelay(attempt, config, retryAfterMs, random)
+			onRetry?.({ attempt, delayMs, error: err })
+			budget.remaining--
+			await sleep(delayMs, signal)
+		}
 	}
 }
