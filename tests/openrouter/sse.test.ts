@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { parseSseStream } from "../../src/openrouter/sse.js";
+import { IdleTimeoutError } from "../../src/openrouter/errors.js";
 
 function bytes(...chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -88,6 +89,33 @@ describe("parseSseStream", () => {
       `event: foo\nid: 1\ndata: {"a":1}\nretry: 5\n\n`,
       `data: [DONE]\n\n`
     );
+    expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
+  });
+});
+
+describe("parseSseStream — idle timeout", () => {
+  test("throws IdleTimeoutError if no chunk arrives within idleTimeoutMs", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        ctrl.enqueue(new TextEncoder().encode(`data: {"a":1}\n\n`));
+      },
+    });
+
+    const iter = parseSseStream(stream, { idleTimeoutMs: 50 })[Symbol.asyncIterator]();
+
+    const first = await iter.next();
+    expect(first.value).toEqual({ a: 1 });
+
+    await expect(iter.next()).rejects.toBeInstanceOf(IdleTimeoutError);
+  });
+
+  test("does not arm the idle timer when idleTimeoutMs is undefined", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        ctrl.enqueue(new TextEncoder().encode(`data: {"a":1}\n\ndata: [DONE]\n\n`));
+        setTimeout(() => ctrl.close(), 50);
+      },
+    });
     expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
   });
 });

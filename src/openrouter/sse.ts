@@ -1,4 +1,4 @@
-import { StreamTruncatedError } from "./errors.js";
+import { StreamTruncatedError, IdleTimeoutError } from "./errors.js";
 
 /**
  * @file Minimal Server-Sent Events (SSE) parser for OpenRouter streaming
@@ -13,6 +13,17 @@ import { StreamTruncatedError } from "./errors.js";
  * Each yielded value is the JSON-parsed payload of one frame. The OpenAI-
  * compatible `[DONE]` sentinel terminates iteration cleanly.
  */
+
+/**
+ * Options for {@link parseSseStream}.
+ */
+export interface ParseSseStreamOptions {
+  /**
+   * Idle window in milliseconds. If no chunk arrives in this window, throws
+   * {@link IdleTimeoutError}. Default: no timer (wait forever).
+   */
+  idleTimeoutMs?: number;
+}
 
 /**
  * Parse a `ReadableStream` of UTF-8 bytes as an SSE event stream, yielding
@@ -37,26 +48,35 @@ import { StreamTruncatedError } from "./errors.js";
  * already does this.
  *
  * @param body A `ReadableStream<Uint8Array>` such as `fetch().body`.
+ * @param options Optional configuration for the parser.
+ * @param options.idleTimeoutMs If set, each `reader.read()` races a timer of
+ *   this many milliseconds; if no chunk arrives in time, throws
+ *   {@link IdleTimeoutError}. Omit (or leave `undefined`) to wait forever.
  * @returns Async generator of JSON-parsed payloads (one per `data:` frame).
  *
  * @example
  * ```ts
  * const res = await fetch(url, { headers: { Accept: "text/event-stream" } });
- * for await (const payload of parseSseStream(res.body!)) {
+ * for await (const payload of parseSseStream(res.body!, { idleTimeoutMs: 30_000 })) {
  *   console.log(payload);
  * }
  * ```
  */
 export async function* parseSseStream(
-  body: ReadableStream<Uint8Array>
+  body: ReadableStream<Uint8Array>,
+  options: ParseSseStreamOptions = {}
 ): AsyncGenerator<unknown, void, void> {
   const reader = body.getReader();
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
+  const idleTimeoutMs = options.idleTimeoutMs;
 
   try {
     while (true) {
-      const { value, done } = await reader.read();
+      const readPromise = reader.read();
+      const { value, done } = idleTimeoutMs != null
+        ? await raceIdleTimeout(readPromise, idleTimeoutMs)
+        : await readPromise;
       if (value) buffer += decoder.decode(value, { stream: true });
       if (done) buffer += decoder.decode();
 
@@ -150,4 +170,33 @@ function extractData(frame: string): string | null {
   }
   if (dataLines.length === 0) return null;
   return dataLines.join("\n");
+}
+
+/**
+ * Race a `reader.read()` promise against a timer. If the timer fires first,
+ * throws {@link IdleTimeoutError}. The losing branch is left to settle
+ * naturally; the underlying stream should be cancelled by the caller (the
+ * OpenRouter client does this in its `finally`).
+ *
+ * @template T Resolved value of the read promise.
+ * @param readPromise The pending `reader.read()` promise.
+ * @param idleMs Idle window in ms.
+ * @returns Whatever the read resolved to.
+ * @throws {IdleTimeoutError} If the timer fires before the read resolves.
+ */
+async function raceIdleTimeout<T>(readPromise: Promise<T>, idleMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timerPromise = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new IdleTimeoutError({
+        message: `SSE idle timeout after ${idleMs}ms`,
+        idleMs,
+      }));
+    }, idleMs);
+  });
+  try {
+    return await Promise.race([readPromise, timerPromise]);
+  } finally {
+    if (timer != null) clearTimeout(timer);
+  }
 }
