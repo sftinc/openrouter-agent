@@ -605,10 +605,11 @@ export async function runLoop(
     emit({ type: "error", runId, error: code !== undefined ? { code, message } : { message } });
   };
 
-  const sessionMessages =
+  const sessionRecord =
     options.sessionId && config.sessionStore
       ? await config.sessionStore.get(options.sessionId)
       : null;
+  const sessionMessages = sessionRecord?.messages ?? null;
   const { system: systemContent, messages } = resolveInitialMessages(
     input,
     options.system,

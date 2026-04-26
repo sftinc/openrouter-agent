@@ -7,8 +7,14 @@
  *
  * - {@link SessionStore} — the persistence interface implemented by
  *   custom backends.
+ * - {@link SessionRecord} — the persisted session shape returned from
+ *   {@link SessionStore.get} (messages + ISO-8601 `createdAt` /
+ *   `updatedAt`).
  * - {@link InMemorySessionStore} — a built-in implementation backed by a
  *   {@link Map}, suitable for tests and single-process servers.
+ * - {@link InMemorySessionStoreOptions} — construction options for
+ *   {@link InMemorySessionStore} (`ttlMs` for idle TTL, `now` for clock
+ *   injection).
  * - {@link SessionBusyError} — error thrown by {@link Agent} when an
  *   overlapping run is started for the same `sessionId`.
  *
@@ -17,5 +23,9 @@
  * also defensively filtered on load.
  */
 export type { SessionStore } from "./SessionStore.js";
-export { InMemorySessionStore } from "./InMemorySessionStore.js";
+export type { SessionRecord } from "./SessionRecord.js";
+export {
+  InMemorySessionStore,
+  type InMemorySessionStoreOptions,
+} from "./InMemorySessionStore.js";
 export { SessionBusyError } from "./SessionBusyError.js";

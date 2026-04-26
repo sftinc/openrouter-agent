@@ -318,7 +318,7 @@ describe("runLoop", () => {
 
     const persisted = await store.get("s1");
     expect(persisted).not.toBeNull();
-    const roles = persisted!.map((m) => m.role);
+    const roles = persisted!.messages.map((m) => m.role);
     expect(roles).toEqual(["user", "assistant", "user", "assistant"]);
   });
 
@@ -364,7 +364,7 @@ describe("runLoop", () => {
     expect(sys.content).toBe("new prompt");
 
     const persisted = await store.get("s1");
-    const sysStored = persisted!.find((m) => m.role === "system");
+    const sysStored = persisted!.messages.find((m) => m.role === "system");
     expect(sysStored).toBeUndefined();
   });
 
@@ -420,7 +420,7 @@ describe("runLoop", () => {
     await runLoop(cfg, "followup", { sessionId: "s1" }, collect([]));
 
     const persisted = await store.get("s1");
-    expect(persisted).toEqual(before);
+    expect(persisted?.messages).toEqual(before);
   });
 
   describe("tool display merging", () => {
@@ -567,7 +567,7 @@ describe("runLoop", () => {
     await runLoop(cfg, "followup", { sessionId: "s1", signal: ctrl.signal }, collect(events));
 
     const persisted = await store.get("s1");
-    expect(persisted).toEqual(before);
+    expect(persisted?.messages).toEqual(before);
     const end = events.find((e) => e.type === "agent:end");
     if (end?.type === "agent:end") {
       expect(end.result.stopReason).toBe("aborted");

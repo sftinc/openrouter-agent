@@ -233,8 +233,14 @@ export {
  * methods: `get`, `set`, `delete`. The system role is never persisted; on a
  * failed/aborted run, the session is not written back, so retrying the same
  * user message is safe.
+ *
+ * - {@link SessionRecord} — the value `SessionStore.get` resolves to: the
+ *   stored `messages` plus ISO-8601 `createdAt` / `updatedAt`.
+ * - {@link InMemorySessionStoreOptions} — construction options for
+ *   {@link InMemorySessionStore} (`ttlMs` for idle TTL, `now` for clock
+ *   injection).
  */
-export type { SessionStore } from "./session/index.js";
+export type { SessionStore, SessionRecord, InMemorySessionStoreOptions } from "./session/index.js";
 /**
  * Event display and consumption helpers.
  *
