@@ -24,6 +24,6 @@ const agent = new Agent({
 
 const result = await agent.run('What is 347 * 29?')
 
-console.log(result.text) // assistant's final text
-console.log(result.stopReason) // "done" | "max_turns" | "length" | "content_filter" | "error" | "aborted"
-console.log(result.usage) // token + cost totals across the whole run
+console.log('[text]', result.text) // assistant's final text
+console.log('\n[stopReason]', result.stopReason) // "done" | "max_turns" | "length" | "content_filter" | "error" | "aborted"
+console.log('\n[Usage]', result.usage) // token + cost totals across the whole run
