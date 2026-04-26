@@ -28,11 +28,11 @@ import { setOpenRouterClient, Tool, Agent, InMemorySessionStore } from '../../sr
  * The API key is read from `process.env.OPENROUTER_API_KEY`.
  */
 setOpenRouterClient({
-	// model: 'inception/mercury-2',
+	model: 'inception/mercury-2',
 	max_tokens: 2000,
 	temperature: 0.3,
-	// reasoning: { effort: 'high' },
-	title: 'openrouter-agent demo',
+	reasoning: { effort: 'medium' },
+	title: 'openrouter-agent: chat-stream-events',
 })
 
 /**

@@ -124,13 +124,17 @@ export interface LLMConfig {
 	/**
 	 * Reasoning controls for reasoning-capable models.
 	 *
-	 * - `effort`: budget knob (`low` | `medium` | `high`).
+	 * - `effort`: budget knob (`none` | `minimal` | `low` | `medium` | `high` | `xhigh`).
+	 *   Token-allocation ratios are roughly 0.1 / 0.2 / 0.5 / 0.8 / 0.95
+	 *   for minimal → xhigh. `xhigh` is only honored by the newest
+	 *   reasoning models (e.g. Claude 4.7 Opus+); unsupported levels are
+	 *   mapped to the nearest supported one by OpenRouter.
 	 * - `max_tokens`: hard cap on reasoning tokens.
 	 * - `enabled: false` disables reasoning entirely (defaults to enabled
 	 *   on capable models).
 	 */
 	reasoning?: {
-		effort?: 'low' | 'medium' | 'high'
+		effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 		max_tokens?: number
 		enabled?: boolean
 	}

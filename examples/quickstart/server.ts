@@ -1,0 +1,31 @@
+import { z } from 'zod'
+import { setOpenRouterClient, Tool, Agent } from '../../src/index.js'
+
+setOpenRouterClient({
+	model: 'inception/mercury-2',
+	max_tokens: 2000,
+	temperature: 0.3,
+	reasoning: { effort: 'medium' },
+	title: 'openrouter-agent: quickstart',
+})
+
+const calculator = new Tool<{ expression: string }>({
+	name: 'calculator',
+	description: 'Evaluate a basic arithmetic expression.',
+	inputSchema: z.object({ expression: z.string() }),
+	execute: async ({ expression }) => String(Function(`"use strict"; return (${expression});`)()),
+})
+
+const agent = new Agent({
+	name: 'demo-assistant',
+	description: 'A helpful assistant with a calculator.',
+	systemPrompt: 'You are concise and helpful.',
+	tools: [calculator],
+})
+
+const result = await agent.run('What is 347 * 29?')
+
+console.log('[text]', result.text) // assistant's final text
+console.log('\n[stopReason]', result.stopReason) // "done" | "max_turns" | "length" | "content_filter" | "error" | "aborted"
+console.log('\n[result]')
+console.dir(result, { depth: null }) // the full result object, including tool calls and intermediate reasoning
