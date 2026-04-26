@@ -391,7 +391,7 @@ Structural type compatible with Node's `http.ServerResponse`. Defined inline so 
 | `writeHead` | `(status: number, headers: Record<string, string>) => unknown` | Write the response status line and headers. Called once. |
 | `write` | `(chunk: string \| Uint8Array) => boolean` | Write a chunk to the response body. |
 | `end` | `() => void` | Finalize the response. Called from a `finally` block by `pipeEventsToNodeResponse`. |
-| `on` | `(event: "close", listener: () => void) => unknown` | Register a transport-close listener. Used to wire abort on client disconnect. |
+| `on` | `(event: "close" \| "error", listener: (err?: Error) => void) => unknown` | Register transport listeners. The `close` listener wires abort on client disconnect; the `error` listener (forthcoming) wires abort on socket-level write errors before `close` arrives. |
 | `writableEnded` | `boolean` (readonly) | Truthy after `end()` has been called; consulted on the `close` listener to avoid aborting a clean run. |
 
 Express, Fastify, and Node's built-in `http.ServerResponse` all satisfy this interface.
@@ -414,7 +414,7 @@ Source: `src/helpers/responseAdapters.ts:29-44`.
 
 Source: `src/helpers/responseAdapters.ts:91`.
 
-Stream events as NDJSON to a Node response-shaped object. Sets default headers, writes one line per event, and **always** calls `res.end()` in a `finally`. If `options.abort` is provided, hooks `res.on('close')` so a client disconnect triggers `abort.abort()` (only if the response has not already ended and the signal has not already fired).
+Stream events as NDJSON to a Node response-shaped object. Sets default headers, writes one line per event, and **always** calls `res.end()` in a `finally`. If `options.abort` is provided, hooks `res.on('close')` so a client disconnect triggers `abort.abort()` (only if the response has not already ended and the signal has not already fired). A forthcoming change additionally hooks `res.on('error', ...)` so transport-level write errors that arrive without a preceding `close` (rare but observable on half-broken sockets) also abort the run.
 
 Internally, each call to `iter.next()` is raced against an abort promise so the loop terminates promptly on disconnect rather than waiting for the next event from the source.
 
@@ -444,8 +444,9 @@ function pipeEventsToNodeResponse(
 - Calls `res.writeHead(status, headers)` exactly once.
 - Calls `res.write(line)` per event.
 - Attaches a `close` listener via `res.on('close', ...)` if `abort` is supplied (single listener, one-shot semantics gated by `writableEnded` / `signal.aborted`).
+- (Forthcoming) Attaches an `error` listener via `res.on('error', ...)` if `abort` is supplied, with the same one-shot guard, so socket-level write errors abort the run even when no `close` event fires first.
 - Calls `res.end()` in a `finally` block.
-- May invoke `options.abort.abort()` on transport close.
+- May invoke `options.abort.abort()` on transport close or transport error.
 
 **Example: Express handler**
 

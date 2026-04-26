@@ -1,6 +1,6 @@
 # OpenRouter Client (`src/openrouter/`)
 
-This folder owns the package's transport layer: a thin, typed HTTP client for OpenRouter's `/chat/completions` endpoint, the wire-shape types that mirror OpenRouter's request/response schema, a project-singleton registry so every `Agent` shares one client, and a small SSE parser used by streaming completions. Higher-level concerns (the agent loop, tool execution, sessions) live elsewhere; this folder is intentionally minimal — no retries, no queueing, no rate limiting. See `src/openrouter/client.ts:14-17` for the design statement.
+This folder owns the package's transport layer: a thin, typed HTTP client for OpenRouter's `/chat/completions` endpoint, the wire-shape types that mirror OpenRouter's request/response schema, a project-singleton registry so every `Agent` shares one client, a small SSE parser used by streaming completions, and (forthcoming) a connection-level retry helper that handles transient HTTP failures before any chunks are yielded. Higher-level concerns (the agent loop, tool execution, sessions) live elsewhere; this folder stays minimal — no queueing, no rate limiting. The pre-release client performs no retries; the retry surface (`RetryConfig`, `defaultIsRetryable`, `StreamTruncatedError`, `IdleTimeoutError`) ships in a follow-up release per the spec at `docs/superpowers/specs/2026-04-26-llm-retry-design.md`. See `src/openrouter/client.ts:14-17` for the original design statement.
 
 The folder's own re-export surface lives in `src/openrouter/index.ts`. The package root (`src/index.ts`) re-exports a curated subset of these for external consumers; symbols that are folder-exported but not package-exported are listed under "Internal helpers" at the bottom.
 
@@ -13,6 +13,9 @@ import {
   setOpenRouterClient,
   OpenRouterClient,
   OpenRouterError,
+  StreamTruncatedError,
+  IdleTimeoutError,
+  defaultIsRetryable,
   DEFAULT_MODEL,
   // type-only imports
   type LLMConfig,
@@ -20,8 +23,11 @@ import {
   type OpenRouterTool,
   type CompletionsRequest,
   type CompletionsResponse,
+  type RetryConfig,
 } from "@sftinc/openrouter-agent";
 ```
+
+`StreamTruncatedError`, `IdleTimeoutError`, `defaultIsRetryable`, and `RetryConfig` are part of the planned retry surface and are not present in the pre-release build — see [Retry surface](#retry-surface) at the bottom of this page.
 
 All examples below assume that import path. Internal callers inside this repo import from the folder index (`./openrouter`), per the project convention in `CLAUDE.md`.
 
@@ -207,6 +213,16 @@ POSTs a streaming chat completion and yields parsed SSE `CompletionChunk` values
 - `OpenRouterError` on non-2xx responses (thrown before any chunks are yielded).
 - `OpenRouterError` with a `"streaming response had no body"` message when the response is OK but `response.body` is `null` (`src/openrouter/client.ts:266-271`).
 - Re-throws any error from the SSE parser (e.g. malformed JSON in a `data:` frame).
+- (Forthcoming) `StreamTruncatedError` when the SSE body ends without a `[DONE]` sentinel and without a terminal `finish_reason`. Replaces today's silent treat-as-EOF behavior at `src/openrouter/sse.ts:78-89`.
+- (Forthcoming) `IdleTimeoutError` when no chunk arrives within the configured `idleTimeoutMs` window. Both new error types abort the underlying `fetch` before throwing so the socket is freed.
+
+#### Retry behavior
+
+> **Forthcoming.** Pre-release behavior performs zero retries.
+
+When called via `Agent.run`, `completeStream` participates in a per-turn `RetryBudget` for **connection-level** failures: `fetch` rejections (DNS, ECONNRESET, ECONNREFUSED, ETIMEDOUT, TLS) and retryable response statuses (`408`, `429`, `500`, `502`, `503`, `504`). Each retry honors `Retry-After` (capped at the configured `maxDelayMs`) and uses exponential backoff with full jitter. Stream-level failures (`StreamTruncatedError`, `IdleTimeoutError`, mid-stream provider errors) are retried by the loop layer, not by `completeStream` — see [agent.md `Retry behavior`](./agent.md#retry-behavior). The same budget is shared across both layers; budgets do **not** compound.
+
+Direct callers of `OpenRouterClient.completeStream` (without `Agent`) get connection-level retries with the default `RetryConfig`. To opt out, construct the client with `{ retry: { maxAttempts: 1 } }` (forthcoming option on `OpenRouterClientOptions`).
 
 #### Side effects
 
@@ -242,17 +258,19 @@ class OpenRouterError extends Error {
   readonly code: number;
   readonly body?: unknown;
   readonly metadata?: Record<string, unknown>;
+  readonly retryAfterMs?: number;   // forthcoming
 
   constructor(params: {
     code: number;
     message: string;
     body?: unknown;
     metadata?: Record<string, unknown>;
+    retryAfterMs?: number;          // forthcoming
   });
 }
 ```
 
-Source: `src/openrouter/client.ts:55-77`.
+Source: `src/openrouter/client.ts:55-77`. The `retryAfterMs` field is part of the [Retry surface](#retry-surface) and lands in a follow-up release; it is parsed from the `Retry-After` response header (HTTP-date or seconds form). Used by the retry helper as a lower bound on the next backoff delay.
 
 ### Constructor parameters
 
@@ -673,6 +691,126 @@ for (const ann of choice.message.annotations ?? []) {
 ## `FunctionTool`, `DatetimeServerTool`, `WebSearchServerTool`
 
 The three variants of `OpenRouterTool`. These are folder-level exports (re-exported from `src/openrouter/index.ts`) but **not** re-exported from the package root — external consumers should reference `OpenRouterTool` and discriminate on `type`. See the variant tables under `OpenRouterTool` above for every field.
+
+---
+
+## Retry surface
+
+> **Forthcoming.** This section documents the planned retry exports per the spec at `docs/superpowers/specs/2026-04-26-llm-retry-design.md`. None of the symbols below are present in the pre-release build; the current build performs zero retries.
+
+The retry surface lives in `src/openrouter/retry.ts` (planned) and `src/openrouter/errors.ts` (planned, or extension of the existing module).
+
+### `RetryConfig`
+
+Knobs governing retry behavior. Surfaced on:
+
+- `OpenRouterClientOptions.retry` — applied to direct `OpenRouterClient.completeStream` callers (and any other client method that retries).
+- `AgentConfig.retry` — applied to every run started by an Agent.
+- `AgentRunOptions.retry` — per-run shallow-merge override.
+
+Per-run overrides merge field-by-field on top of the Agent default, which merges on top of the built-in defaults. Any field unset at every layer falls through to the default below.
+
+```ts
+export interface RetryConfig {
+  maxAttempts?: number;            // default 3
+  initialDelayMs?: number;         // default 500
+  maxDelayMs?: number;             // default 8000
+  idleTimeoutMs?: number;          // default 60_000
+  isRetryable?: (err: unknown) => boolean; // default defaultIsRetryable
+}
+```
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `maxAttempts` | `number` | no | `3` | Total attempts including the first. `1` disables retries entirely. |
+| `initialDelayMs` | `number` | no | `500` | Base for exponential-with-full-jitter backoff: `delayMs = random(0, min(maxDelayMs, initialDelayMs * 2^(attempt-1)))`. |
+| `maxDelayMs` | `number` | no | `8000` | Cap on a single backoff delay. Also caps honored `Retry-After` so a malicious or buggy provider cannot pin the client. |
+| `idleTimeoutMs` | `number` | no | `60_000` | Idle window for the SSE consumer. If no chunk arrives in this many ms, the consumer raises `IdleTimeoutError`, which `defaultIsRetryable` treats as retryable. |
+| `isRetryable` | `(err: unknown) => boolean` | no | `defaultIsRetryable` | Override the retryable-error predicate. Receives the raw error thrown by the underlying fetch / SSE / loop. Returning `false` causes the retry helper to immediately re-throw. |
+
+### `defaultIsRetryable`
+
+Default predicate exported from the package root.
+
+```ts
+function defaultIsRetryable(err: unknown): boolean;
+```
+
+Returns `true` for:
+- `OpenRouterError` whose `code` is one of `408`, `429`, `500`, `502`, `503`, `504`.
+- Any `Error` with no `code` and that is **not** an `AbortError` (treated as a network-level failure: ECONNRESET, ECONNREFUSED, ETIMEDOUT, DNS, TLS).
+- `StreamTruncatedError`.
+- `IdleTimeoutError`.
+- The internal `RetryableProviderError` synthesized by the loop from a mid-stream `chunk.error` or `finish_reason: "error"` that occurred before any `message:delta` was emitted.
+
+Returns `false` for:
+- `AbortError` (always — user cancellation).
+- `OpenRouterError` whose `code` is in `400`, `401`, `403`, `404`, `409`, `422`, or any other non-retryable 4xx not listed above.
+- Any error synthesized from `finish_reason: "content_filter"`.
+
+### `StreamTruncatedError`
+
+Raised by the SSE consumer when the response body ends without the `[DONE]` sentinel and without a terminal `finish_reason`. Replaces today's silent treat-as-EOF behavior at `src/openrouter/sse.ts:78-89`. Aborts the underlying `fetch` before throwing so the socket is freed.
+
+```ts
+class StreamTruncatedError extends Error {
+  readonly name: "StreamTruncatedError";
+  readonly generationId?: string;
+  readonly partialContentLength: number;
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `generationId` | `string \| undefined` | OpenRouter generation id observed before truncation, if one was assigned. Useful for log lookup. |
+| `partialContentLength` | `number` | Total `delta.content` length accumulated before the stream was cut. |
+
+`defaultIsRetryable` returns `true` for this error.
+
+### `IdleTimeoutError`
+
+Raised by the SSE consumer when no chunk arrives within `RetryConfig.idleTimeoutMs`. Aborts the underlying `fetch` before throwing.
+
+```ts
+class IdleTimeoutError extends Error {
+  readonly name: "IdleTimeoutError";
+  readonly idleMs: number;
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `idleMs` | `number` | The configured idle window that elapsed without a chunk. |
+
+`defaultIsRetryable` returns `true` for this error.
+
+### Example: per-Agent retry override
+
+```ts
+import {
+  Agent,
+  defaultIsRetryable,
+  StreamTruncatedError,
+  type RetryConfig,
+} from "@sftinc/openrouter-agent";
+
+const retry: RetryConfig = {
+  maxAttempts: 5,
+  initialDelayMs: 250,
+  maxDelayMs: 5_000,
+  idleTimeoutMs: 30_000,
+  // Extend the default predicate: also retry on a custom user-defined error.
+  isRetryable: (err) => defaultIsRetryable(err) || err instanceof MyTransientError,
+};
+
+const agent = new Agent({
+  name: "demo",
+  description: "demo",
+  retry,
+});
+```
+
+See also: `OpenRouterError`, [agent.md `Retry behavior`](./agent.md#retry-behavior), [agent.md `retry` event](./agent.md#retry).
 
 ---
 

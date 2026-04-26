@@ -14,9 +14,9 @@ Do not import from internal subpaths (`@sftinc/openrouter-agent/src/...`); they 
 
 | Page | Folder | Surface |
 | --- | --- | --- |
-| [Agent Layer](./agent.md) | `src/agent/` | `Agent`, `AgentConfig`, `AgentRunOptions`, `AgentRun`, every `AgentEvent` variant, `AgentDisplayHooks`, `EventDisplay`, `EventEmit`, loop semantics |
+| [Agent Layer](./agent.md) | `src/agent/` | `Agent`, `AgentConfig`, `AgentRunOptions`, `AgentRun`, every `AgentEvent` variant (including `retry`), `AgentDisplayHooks`, `EventDisplay`, `EventEmit`, loop semantics, retry behavior |
 | [Tool Layer](./tool.md) | `src/tool/` | `Tool`, `ToolConfig`, `ToolDeps`, `ToolResult`, `ToolDisplayHooks`, result coercion, Zod → JSON Schema conversion |
-| [OpenRouter Client](./openrouter.md) | `src/openrouter/` | `OpenRouterClient`, `setOpenRouterClient`, `OpenRouterError`, `DEFAULT_MODEL`, `LLMConfig`, `OpenRouterClientOptions`, `OpenRouterTool`, `CompletionsRequest`, `CompletionsResponse` |
+| [OpenRouter Client](./openrouter.md) | `src/openrouter/` | `OpenRouterClient`, `setOpenRouterClient`, `OpenRouterError`, `DEFAULT_MODEL`, `LLMConfig`, `OpenRouterClientOptions`, `OpenRouterTool`, `CompletionsRequest`, `CompletionsResponse`, `RetryConfig`, `defaultIsRetryable`, `StreamTruncatedError`, `IdleTimeoutError` |
 | [Session Layer](./session.md) | `src/session/` | `SessionStore` interface, `InMemorySessionStore`, `SessionBusyError`, contract for custom (Redis / Postgres) implementations |
 | [Conversation Types](./types.md) | `src/types/` | `Message`, `ContentPart`, `ToolCall`, `Usage`, `Result`, all `stopReason` values |
 | [Event Helpers](./helpers.md) | `src/helpers/` | `defaultDisplay`, `displayOf`, `consumeAgentEvents`, `streamText`, NDJSON codec (`serializeEvent`, `serializeEventsAsNDJSON`, `readEventStream`), HTTP adapters (`pipeEventsToNodeResponse`, `eventsToWebResponse`), high-level handlers (`handleAgentRun`, `handleAgentRunWebResponse`) |

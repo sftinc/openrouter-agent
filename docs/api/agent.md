@@ -16,10 +16,14 @@ import {
   type EventDisplay,
   type EventEmit,
   type Result,
+  type RetryConfig,
+  defaultIsRetryable,
   SessionBusyError,
   setOpenRouterClient,
 } from "@sftinc/openrouter-agent";
 ```
+
+`RetryConfig` and `defaultIsRetryable` are technically owned by `src/openrouter/` (their primary documentation lives in [openrouter.md](./openrouter.md)) but are referenced throughout this page because they configure agent runs.
 
 Within the package, the folder index re-exports everything (`src/agent/index.ts:17-22`):
 
@@ -73,6 +77,7 @@ Source: `src/agent/Agent.ts:49-90`.
 | `maxTurns` | `number` | no | `10` | Maximum LLM-call/tool-execution cycles per run before the loop terminates with `stopReason: "max_turns"`. |
 | `sessionStore` | `SessionStore` | no | `new InMemorySessionStore()` | Backing store for conversation history. The store is consulted only when the caller also passes `options.sessionId`. |
 | `display` | `AgentDisplayHooks` | no | `undefined` | Optional display hooks that decorate `agent:start` and `agent:end` events with human-readable `display` payloads. See [`AgentDisplayHooks`](#agentdisplayhooks). |
+| `retry` | `RetryConfig` | no | `{ maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 8000, idleTimeoutMs: 60_000, isRetryable: defaultIsRetryable }` | Retry policy for transient LLM-call failures. Retries are scoped to the **pre-first-content-delta** window per turn — once any `message:delta` has been emitted, a subsequent failure is committed (`stopReason: "error"`) and never retried. Set `maxAttempts: 1` to disable retries. See [Retry behavior](#retry-behavior) and [openrouter.md `RetryConfig`](./openrouter.md#retryconfig). **Forthcoming — implementation lands in a follow-up release; current behavior matches `maxAttempts: 1`.** |
 
 ### `agent.run(input, options?)`
 
@@ -144,6 +149,7 @@ Source: `src/agent/Agent.ts:107-114`. Defined as `Omit<RunLoopOptions, "parentRu
 | `maxTurns` | `number` | no | `AgentConfig.maxTurns` (`10`) | Per-call override of the maximum LLM/tool turn count. |
 | `client` | `LLMConfig` | no | `undefined` | Per-call OpenRouter overrides; merged on top of `AgentConfig.client` (`src/agent/loop.ts:590-593`). |
 | `parentRunId` | `string` | no | `undefined` | If set, the resulting `agent:start` event reports this run as a child of `parentRunId`. Subagent invocations set this automatically inside the tool wrapper; explicit callers rarely need it. |
+| `retry` | `RetryConfig` | no | inherits `AgentConfig.retry` | Per-call retry override. Merged field-by-field on top of the Agent default: any field unspecified here falls through to the Agent's `retry`, then to the built-in defaults. So `agent.run(input, { retry: { maxAttempts: 5 } })` uses 5 attempts and inherits `initialDelayMs`, `maxDelayMs`, `idleTimeoutMs`, and `isRetryable` from the Agent. **Forthcoming — see `AgentConfig.retry`.** |
 
 ---
 
@@ -173,12 +179,12 @@ Every event carries a `runId: string`. Subagent-emitted events additionally carr
 
 ```
 agent:start
-  → (message:delta* + message | tool:start + tool:progress* + tool:end)*
+  → ((retry* | message:delta* + message) | tool:start + tool:progress* + tool:end)*
   → error?
   → agent:end
 ```
 
-`agent:end` is always the terminal event. `error` fires at most once per run, immediately before a terminal `agent:end` with `stopReason: "error"`.
+`agent:end` is always the terminal event. `error` fires at most once per run, immediately before a terminal `agent:end` with `stopReason: "error"`. `retry` may fire zero or more times per turn, **only before** the turn's first `message:delta` (the retry window closes once any content has been emitted to the client). A turn that ultimately succeeds after retries emits its `retry` events first, then the normal `message:delta*` / `message`. A turn that exhausts the retry budget emits its retry events, then a single `error`, then `agent:end`.
 
 ### `agent:start`
 
@@ -290,6 +296,31 @@ Source: `src/agent/events.ts:208-227`. Distinguished from the success variant by
 
 A `tool:end` error fires when: (a) the tool was not registered with the agent (`'tool "X" is not registered with this agent'`), (b) `inputSchema.parse` threw, or (c) `Tool.execute` threw / returned `{ error }` (`src/agent/loop.ts:341-352`).
 
+### `retry`
+
+> **Forthcoming.** This variant is part of the planned retry surface (spec: `docs/superpowers/specs/2026-04-26-llm-retry-design.md`); it lands in a follow-up release. Pre-release runs never emit it.
+
+Source: planned addition to `src/agent/events.ts`. Fires **once per failed retryable attempt**, *after* the failure has been classified retryable and *before* the backoff sleep. Only fires while the turn's retry window is open (no `message:delta` emitted yet for this turn). The give-up after exhausting the budget does **not** emit a `retry` — it emits the existing `error` event, symmetric with how non-retryable failures end.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `type` | `"retry"` | Discriminator. |
+| `runId` | `string` | Run id this retry belongs to. |
+| `turn` | `number` | Zero-based turn index within the run. |
+| `attempt` | `number` | One-based; the attempt that just failed. The next attempt will be `attempt + 1`. |
+| `delayMs` | `number` | Computed backoff delay until the next attempt, in milliseconds. Honors `Retry-After` (capped at `maxDelayMs`). |
+| `error` | `{ code?: number; message: string; metadata?: Record<string, unknown> }` | The failure being retried. `code` is the HTTP status when the underlying error was an `OpenRouterError`; absent for transport-level errors. |
+| `display` | `EventDisplay \| undefined` | Resolved display payload from `AgentDisplayHooks.retry`, if configured. |
+
+Triggers (all must satisfy `isRetryable`, the per-turn retry budget must have remaining attempts, and the abort signal must not be set):
+- `OpenRouterError` with retryable status (default predicate: `408`, `429`, `500`, `502`, `503`, `504`).
+- Transport-level errors before headers (DNS, ECONNRESET, ECONNREFUSED, ETIMEDOUT, TLS).
+- `StreamTruncatedError` (stream ends without `[DONE]` / terminal `finish_reason`) raised from the SSE consumer.
+- `IdleTimeoutError` (no chunk within `idleTimeoutMs`) raised from the SSE consumer.
+- Mid-stream `chunk.error` or `finish_reason: "error"` seen before any `message:delta` has been emitted (translated by the loop into a synthetic retryable error).
+
+`AbortError` is **never** retryable. An abort during the backoff sleep gives up immediately and surfaces via the existing aborted path (`stopReason: "aborted"`, no `error` event, no `retry` event for the give-up).
+
 ### `error`
 
 Source: `src/agent/events.ts:228-241`. Run-fatal error. Always immediately precedes an `agent:end` with `stopReason: "error"`. Fires at most once per run.
@@ -317,6 +348,7 @@ Source: `src/agent/events.ts:46-75`. Optional hooks on `AgentConfig.display` tha
 | `success` | `(result: Result) => Partial<EventDisplay>` | no | Called when emitting `agent:end` with `stopReason === "done"`. Falls back to `end` if omitted. |
 | `error` | `(result: Result) => Partial<EventDisplay>` | no | Called when emitting `agent:end` with `stopReason === "error"`. Falls back to `end` if omitted. |
 | `end` | `(result: Result) => Partial<EventDisplay>` | no | Universal terminal-state hook. Used for `aborted`, `max_turns`, `length`, `content_filter`, and as the fallback for `done` / `error` when the dedicated hooks are absent. |
+| `retry` | `(info: { turn: number; attempt: number; delayMs: number; error: { code?: number; message: string } }) => Partial<EventDisplay>` | no | Called when emitting a `retry` event. Receives the same data attached to the event. Use to render UI like `"Retrying… (attempt 2/3)"`. Optional, no built-in default. **Forthcoming — see [`retry`](#retry).** |
 
 **Outcome routing for `agent:end`** (`src/agent/loop.ts:283-290`):
 
@@ -389,7 +421,25 @@ Source: `src/types/Message.ts:303-309`.
 
 ### Abort / signal
 
-`options.signal` is checked at the top of every turn (`src/agent/loop.ts:671-674`) and propagated to `config.openrouter.completeStream` so in-flight HTTP requests are cancelled at the transport layer (`src/agent/loop.ts:683-687`). An aborted run terminates with `stopReason: "aborted"` and **never** emits an `error` event.
+`options.signal` is checked at the top of every turn (`src/agent/loop.ts:671-674`) and propagated to `config.openrouter.completeStream` so in-flight HTTP requests are cancelled at the transport layer (`src/agent/loop.ts:683-687`). An aborted run terminates with `stopReason: "aborted"` and **never** emits an `error` event. An abort during a retry backoff sleep gives up immediately — no further attempts, no `retry` event for the give-up.
+
+### Retry behavior
+
+> **Forthcoming.** Spec: `docs/superpowers/specs/2026-04-26-llm-retry-design.md`. Pre-release default behavior is `maxAttempts: 1` (no retries).
+
+Each turn allocates a fresh `RetryBudget` from the resolved `RetryConfig` (per-run override merged on top of `AgentConfig.retry`, with built-in defaults filling any unset fields). The same budget is shared across the two retry layers — the OpenRouter client (connection-level: 4xx-retryable / 5xx / pre-headers transport errors) and the agent loop (stream-level: `StreamTruncatedError`, `IdleTimeoutError`, mid-stream provider errors observed before any `message:delta`). **Budgets do not compound across layers.**
+
+The retry window for a turn is open until the first `message:delta` is emitted. Concretely, the loop tracks `hasEmittedContentDelta` (set the first time `message:delta` is emitted for the current turn). Failures with `hasEmittedContentDelta === false` are eligible for retry; failures with `hasEmittedContentDelta === true` fall through to the existing error path (`stopReason: "error"`, no session persistence, client keeps the partial output it already received).
+
+Backoff:
+
+```
+delayMs = random(0, min(maxDelayMs, initialDelayMs * 2^(attempt - 1)))
+delayMs = max(delayMs, retryAfterMs ?? 0)   // honor Retry-After
+delayMs = min(delayMs, maxDelayMs)          // re-cap after the floor
+```
+
+Tool-call deltas, `turnUsage`, `contentBuf`, `toolCallBuf`, `finishReason`, and `turnError` are all discarded between attempts of the same turn. The failed attempt's `generationId` (if assigned) **is** appended to `Result.generationIds` so the run reflects every upstream call made.
 
 ### Subagent event bubbling
 
@@ -400,11 +450,13 @@ When an `Agent` is invoked as a tool, the wrapper `execute` (`src/agent/Agent.ts
 | Source | Resulting events | Terminal `stopReason` | Session persisted? |
 | --- | --- | --- | --- |
 | Tool throws / `inputSchema.parse` fails / unknown tool | `tool:end` (error variant); loop continues | `done` (or other) | yes |
-| Provider returns `error` chunk | `error`; loop breaks | `error` | no |
-| `completeStream` throws (non-abort) | `error`; loop breaks | `error` | no |
+| Retryable failure before any `message:delta`, with budget remaining | `retry` × N then normal `message:delta` / `message` (turn ultimately succeeds) | `done` (or other) | yes |
+| Retryable failure before any `message:delta`, budget exhausted | `retry` × (N − 1) then `error`; loop breaks | `error` | no |
+| Provider returns `error` chunk after a `message:delta` | `error`; loop breaks (not retried — outside the retry window) | `error` | no |
+| `completeStream` throws (non-abort) after a `message:delta` | `error`; loop breaks (not retried — outside the retry window) | `error` | no |
 | `completeStream` throws (abort) | none | `aborted` | no |
-| `signal.aborted` between turns | none | `aborted` | no |
-| `finish_reason === "error"` | `error`; loop breaks | `error` | no |
+| `signal.aborted` between turns or during backoff sleep | none | `aborted` | no |
+| `finish_reason === "error"` after a `message:delta` | `error`; loop breaks (not retried — outside the retry window) | `error` | no |
 | Loop exhausts `maxTurns` | none | `max_turns` | yes |
 
 ---

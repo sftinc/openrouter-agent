@@ -14,6 +14,7 @@ The public surface is intentionally narrow. There is one canonical entrypoint �
 - [Environment](#environment)
 - [Quickstart](#quickstart)
 - [Streaming events](#streaming-events)
+- [Reliability and retries](#reliability-and-retries)
 - [Subagents](#subagents)
 - [Serving over HTTP](#serving-over-http)
 - [Architecture](#architecture)
@@ -109,7 +110,58 @@ try {
 }
 ```
 
-For the full event vocabulary (`agent:start`, `message`, `message:delta`, `tool:start`, `tool:progress`, `tool:end` success/error, `error`, `agent:end`), see [docs/api/agent.md](./docs/api/agent.md).
+For the full event vocabulary (`agent:start`, `message`, `message:delta`, `tool:start`, `tool:progress`, `tool:end` success/error, `retry`, `error`, `agent:end`), see [docs/api/agent.md](./docs/api/agent.md).
+
+## Reliability and retries
+
+> **Status — forthcoming.** The retry surface described below is the agreed design (spec: [`docs/superpowers/specs/2026-04-26-llm-retry-design.md`](./docs/superpowers/specs/2026-04-26-llm-retry-design.md)). Implementation lands in a follow-up release; pre-release behavior is one attempt per LLM call with no built-in retries — the current default of `maxAttempts: 1` reproduces today's behavior exactly.
+
+Each LLM call inside a turn is retried automatically for transient failures, but only while it is still safe to do so. The boundary is **the first content delta** — once any `message:delta` has been emitted to the client for the current turn, the call is committed. Failures before that point may retry; failures after that point surface as `stopReason: "error"` (and the session is not persisted, so the same input can still be retried by the caller).
+
+What retries cover, by default:
+
+- HTTP `408`, `429`, `500`, `502`, `503`, `504` from OpenRouter.
+- Pre-headers transport errors (DNS, ECONNRESET, ECONNREFUSED, ETIMEDOUT, TLS).
+- `StreamTruncatedError` — connection drops mid-SSE without a terminal `finish_reason` / `[DONE]`.
+- `IdleTimeoutError` — no chunk arrives within the configured idle window.
+- Mid-stream provider errors (`finish_reason: "error"` or `chunk.error`) seen before any content delta.
+
+What never retries: `4xx` other than `408`/`429`, `content_filter`, and any `AbortError`.
+
+Defaults:
+
+| Knob | Default | Notes |
+| --- | --- | --- |
+| `maxAttempts` | `3` | Initial attempt + 2 retries. Set to `1` to disable retries. |
+| `initialDelayMs` | `500` | Base for exponential backoff. |
+| `maxDelayMs` | `8000` | Caps a single backoff delay and honored `Retry-After`. |
+| `idleTimeoutMs` | `60_000` | SSE idle window before raising `IdleTimeoutError`. |
+| `isRetryable` | exported `defaultIsRetryable` | Predicate covering the cases above. Override per-Agent if needed. |
+
+Backoff is **exponential with full jitter** (`delayMs = random(0, min(maxDelayMs, initialDelayMs * 2^(attempt-1)))`), with `Retry-After` honored as a floor (re-capped at `maxDelayMs`).
+
+```ts
+import { Agent, defaultIsRetryable, type RetryConfig } from "@sftinc/openrouter-agent";
+
+const agent = new Agent({
+  name: "demo",
+  description: "demo",
+  retry: {
+    maxAttempts: 5,
+    initialDelayMs: 250,
+    idleTimeoutMs: 30_000,
+  } satisfies RetryConfig,
+});
+
+// Per-run override (shallow-merged on top of the Agent default).
+const result = await agent.run("Plan a trip.", {
+  retry: { maxAttempts: 1 }, // disable for this call
+});
+```
+
+Each retried-and-classified-retryable failure emits one `retry` event before the backoff sleep, carrying `{ runId, turn, attempt, delayMs, error }`. The give-up after exhausting the budget emits the existing `error` event — there is no `retry` event for the give-up.
+
+`AbortSignal` always wins: an abort during the backoff sleep gives up immediately and surfaces as `stopReason: "aborted"` with no further attempts.
 
 ## Subagents
 
@@ -249,6 +301,7 @@ This package is designed to be readable by both humans and AI coding agents (Cla
 5. **`Agent extends Tool`** — to compose subagents, just put one `Agent` in another's `tools` array. Subagent events bubble up with `parentRunId` set; the outer `agent:end` is filtered by outer `runId`.
 6. **Sessions strip the `system` role.** The agent's `systemPrompt` is configuration, not history. It is never written to a `SessionStore` and is stripped on defensive load.
 7. **Failed and aborted runs do not write back to the session.** Retrying the same user input on the same `sessionId` is safe.
-8. **Tools validate inputs with Zod, advertise via `z.toJSONSchema(schema, { target: "draft-7" })`.** Use Zod 4 schemas; non-Zod schemas are not supported.
+8. **Transient LLM-call failures retry automatically before any `message:delta`.** See [Reliability and retries](#reliability-and-retries). Failures *after* the first content delta are committed and surface as `stopReason: "error"`. Tune via `AgentConfig.retry` or per-run `AgentRunOptions.retry`; `RetryConfig`, `defaultIsRetryable`, `StreamTruncatedError`, and `IdleTimeoutError` are all package-root exports.
+9. **Tools validate inputs with Zod, advertise via `z.toJSONSchema(schema, { target: "draft-7" })`.** Use Zod 4 schemas; non-Zod schemas are not supported.
 
 When in doubt, consult [`docs/api/agent.md`](./docs/api/agent.md) for run-loop semantics and [`docs/api/index.md`](./docs/api/index.md) for the full navigation map.
