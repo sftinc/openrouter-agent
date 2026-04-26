@@ -24,7 +24,15 @@ import type {
 } from './types.js'
 import { DEFAULT_MODEL } from './types.js'
 import { parseSseStream } from './sse.js'
-import { parseRetryAfter } from './retry.js'
+import { StreamTruncatedError } from './errors.js'
+import {
+	parseRetryAfter,
+	withRetry,
+	createRetryBudget,
+	resolveRetryConfig,
+	type RetryConfig,
+	type RetryBudget,
+} from './retry.js'
 
 /**
  * Error thrown by {@link OpenRouterClient} when OpenRouter returns a non-2xx
@@ -129,6 +137,46 @@ export interface OpenRouterClientOptions extends LLMConfig {
 	 * rankings/attribution.
 	 */
 	referer?: string
+	/**
+	 * Optional retry policy. Applied to {@link OpenRouterClient.completeStream}
+	 * connection-level failures (`fetch` rejections, retryable HTTP statuses).
+	 * Defaults to `DEFAULT_RETRY_CONFIG` when omitted. Per-call overrides via
+	 * the second argument to `completeStream` are also supported.
+	 */
+	retry?: RetryConfig
+}
+
+/**
+ * Options for {@link OpenRouterClient.completeStream}. Accepts either an
+ * `AbortSignal` (legacy form) or an options object. The options object
+ * lets callers share a {@link RetryBudget} across layers (the agent loop
+ * does this) and override the {@link RetryConfig} per call.
+ *
+ * @example
+ * ```ts
+ * import { OpenRouterClient, createRetryBudget, resolveRetryConfig } from './openrouter'
+ *
+ * const config = resolveRetryConfig({ maxAttempts: 5 })
+ * const budget = createRetryBudget(config)
+ * for await (const chunk of client.completeStream(req, { retryBudget: budget, retryConfig: config })) {
+ *   // ...
+ * }
+ * ```
+ */
+export interface CompleteStreamOptions {
+	/** Cancellation signal. */
+	signal?: AbortSignal
+	/**
+	 * Shared retry budget. When provided, retries decrement this budget so
+	 * the loop layer's stream-level retries do not compound. When omitted,
+	 * the client allocates its own budget from `retryConfig`.
+	 */
+	retryBudget?: RetryBudget
+	/**
+	 * Per-call override of the client's {@link RetryConfig}. Merged
+	 * field-by-field on top of the client's resolved config.
+	 */
+	retryConfig?: RetryConfig
 }
 
 /**
@@ -167,6 +215,8 @@ export class OpenRouterClient {
 	private readonly title?: string
 	/** Per-client {@link LLMConfig} defaults applied to every request. */
 	private readonly defaults: LLMConfig
+	/** Resolved retry policy. Always a fully-populated config (no `undefined` fields). */
+	private readonly retry: ReturnType<typeof resolveRetryConfig>
 
 	/**
 	 * Build a client. Pulls the API key from the options first, then from
@@ -182,7 +232,7 @@ export class OpenRouterClient {
 	 * @throws {Error} If no API key is available from either source.
 	 */
 	constructor(options: OpenRouterClientOptions) {
-		const { apiKey, title, referer, ...llmDefaults } = options
+		const { apiKey, title, referer, retry, ...llmDefaults } = options
 		const envKey = typeof process !== 'undefined' ? process.env?.OPENROUTER_API_KEY : undefined
 		const key = apiKey ?? envKey
 		if (!key) {
@@ -192,6 +242,7 @@ export class OpenRouterClient {
 		this.title = title
 		this.referer = referer
 		this.defaults = llmDefaults
+		this.retry = resolveRetryConfig(retry)
 	}
 
 	/**
@@ -225,12 +276,23 @@ export class OpenRouterClient {
 	 *
 	 * @param request The completion request. `messages` is required;
 	 *   everything else may be omitted to inherit defaults.
-	 * @param signal Optional `AbortSignal`. Aborting cancels the underlying
-	 *   `fetch` and the SSE reader; the generator throws an `AbortError`.
+	 * @param signalOrOptions Optional. Accepts either an `AbortSignal`
+	 *   (legacy form) or a {@link CompleteStreamOptions} object with
+	 *   `signal`/`retryBudget`/`retryConfig`. Aborting cancels the
+	 *   underlying `fetch` and the SSE reader; the generator throws an
+	 *   `AbortError`.
 	 * @returns Async generator yielding {@link CompletionChunk} values. The
 	 *   generator returns when `[DONE]` is seen or the body closes.
 	 * @throws {OpenRouterError} On non-2xx responses (thrown before any
-	 *   chunks are yielded) or when the response has no body.
+	 *   chunks are yielded, after retry attempts are exhausted) or when the
+	 *   response has no body.
+	 * @throws {StreamTruncatedError} When the SSE body ends without `[DONE]`
+	 *   and no terminal `finish_reason` was observed. Carries
+	 *   `partialContentLength` for the bytes that did make it through. When
+	 *   a terminal `finish_reason` was observed, the truncation is treated
+	 *   as a benign provider quirk and the generator returns cleanly.
+	 * @throws {IdleTimeoutError} When no SSE chunk arrives within
+	 *   `idleTimeoutMs` (default 60s).
 	 *
 	 * @example
 	 * ```ts
@@ -241,58 +303,85 @@ export class OpenRouterClient {
 	 */
 	async *completeStream(
 		request: CompletionsRequest,
-		signal?: AbortSignal,
+		signalOrOptions?: AbortSignal | CompleteStreamOptions,
 	): AsyncGenerator<CompletionChunk, void, void> {
-		const headers: Record<string, string> = {
-			Authorization: `Bearer ${this.apiKey}`,
-			'Content-Type': 'application/json',
-			Accept: 'text/event-stream',
-		}
-		if (this.referer) headers['HTTP-Referer'] = this.referer
-		if (this.title) headers['X-OpenRouter-Title'] = this.title
+		const opts: CompleteStreamOptions =
+			signalOrOptions instanceof AbortSignal
+				? { signal: signalOrOptions }
+				: (signalOrOptions ?? {})
+		const signal = opts.signal
+		const config = opts.retryConfig
+			? resolveRetryConfig({ ...this.retry, ...opts.retryConfig })
+			: this.retry
+		const budget = opts.retryBudget ?? createRetryBudget(config)
 
-		const body = {
-			model: DEFAULT_MODEL,
-			...this.defaults,
-			...request,
-			stream: true as const,
-		}
+		const response = await withRetry(
+			async () => {
+				const headers: Record<string, string> = {
+					Authorization: `Bearer ${this.apiKey}`,
+					'Content-Type': 'application/json',
+					Accept: 'text/event-stream',
+				}
+				if (this.referer) headers['HTTP-Referer'] = this.referer
+				if (this.title) headers['X-OpenRouter-Title'] = this.title
 
-		const response = await fetch(`${BASE_URL}/chat/completions`, {
-			method: 'POST',
-			headers,
-			body: JSON.stringify(body),
-			signal,
-		})
+				const body = {
+					model: DEFAULT_MODEL,
+					...this.defaults,
+					...request,
+					stream: true as const,
+				}
 
-		if (!response.ok) {
-			const errBody = await this.safeParseJson(response)
-			const message =
-				(errBody as { error?: { message?: string } } | undefined)?.error?.message ??
-				`HTTP ${response.status}`
-			const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)?.error?.metadata
-			throw new OpenRouterError({
-				code: response.status,
-				message,
-				body: errBody,
-				metadata,
-				retryAfterMs: parseRetryAfter(response.headers.get('Retry-After')),
-			})
-		}
+				const res = await fetch(`${BASE_URL}/chat/completions`, {
+					method: 'POST',
+					headers,
+					body: JSON.stringify(body),
+					signal,
+				})
+
+				if (!res.ok) {
+					const errBody = await this.safeParseJson(res)
+					const message =
+						(errBody as { error?: { message?: string } } | undefined)?.error?.message ??
+						`HTTP ${res.status}`
+					const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)?.error?.metadata
+					throw new OpenRouterError({
+						code: res.status,
+						message,
+						body: errBody,
+						metadata,
+						retryAfterMs: parseRetryAfter(res.headers.get('Retry-After')),
+					})
+				}
+
+				if (!res.body) {
+					throw new OpenRouterError({
+						code: res.status,
+						message: 'streaming response had no body',
+					})
+				}
+
+				return res
+			},
+			{ budget, config, signal },
+		)
 
 		if (!response.body) {
-			throw new OpenRouterError({
-				code: response.status,
-				message: 'streaming response had no body',
-			})
+			throw new OpenRouterError({ code: response.status, message: 'streaming response had no body' })
 		}
 
 		const debug = !!process.env.OPENROUTER_DEBUG
 		const debugChunks: CompletionChunk[] = []
+		let sawTerminalFinishReason = false
+		let partialContentLength = 0
 		try {
-			for await (const payload of parseSseStream(response.body)) {
+			for await (const payload of parseSseStream(response.body, { idleTimeoutMs: config.idleTimeoutMs })) {
 				const chunk = payload as CompletionChunk
 				if (debug) debugChunks.push(chunk)
+				for (const c of chunk.choices ?? []) {
+					if (c.finish_reason != null) sawTerminalFinishReason = true
+					if (typeof c.delta?.content === 'string') partialContentLength += c.delta.content.length
+				}
 				yield chunk
 			}
 			if (debug) {
@@ -304,6 +393,16 @@ export class OpenRouterClient {
 				// eslint-disable-next-line no-console
 				console.log('[openrouter:stream] response:', hasToolCalls ? `\x1b[33m${debugBody}\x1b[0m` : debugBody)
 			}
+		} catch (err) {
+			if (err instanceof StreamTruncatedError) {
+				if (sawTerminalFinishReason) return
+				throw new StreamTruncatedError({
+					message: err.message,
+					generationId: err.generationId,
+					partialContentLength,
+				})
+			}
+			throw err
 		} finally {
 			/**
 			 * Cancel the underlying body stream if the generator is abandoned

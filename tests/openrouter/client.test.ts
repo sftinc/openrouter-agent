@@ -1,5 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { OpenRouterClient, OpenRouterError } from "../../src/openrouter/client.js";
+import { resolveRetryConfig, createRetryBudget } from "../../src/openrouter/retry.js";
 import type { CompletionsResponse } from "../../src/openrouter/index.js";
 
 const OK_RESPONSE: CompletionsResponse = {
@@ -227,5 +228,134 @@ describe("OpenRouterClient", () => {
     // next() after abort should cancel the underlying reader
     await it.return?.();
     expect(cancelled).toBe(true);
+  });
+});
+
+describe("OpenRouterClient.completeStream — connection-level retry", () => {
+  let originalFetch: typeof fetch;
+  beforeEach(() => { originalFetch = global.fetch; });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  function sseBody(...lines: string[]): ReadableStream<Uint8Array> {
+    const enc = new TextEncoder();
+    return new ReadableStream({
+      start(ctrl) {
+        for (const l of lines) ctrl.enqueue(enc.encode(l));
+        ctrl.close();
+      },
+    });
+  }
+
+  function okSseResponse(): Response {
+    return new Response(
+      sseBody(
+        `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"finish_reason":"stop","native_finish_reason":"stop","delta":{"content":"hi"}}]}\n\n`,
+        `data: [DONE]\n\n`,
+      ),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  }
+
+  test("retries on 503 and succeeds on second attempt", async () => {
+    const calls: number[] = [];
+    global.fetch = vi.fn(async () => {
+      calls.push(1);
+      if (calls.length === 1) {
+        return new Response(JSON.stringify({ error: { message: "upstream down" } }), { status: 503 });
+      }
+      return okSseResponse();
+    }) as unknown as typeof fetch;
+
+    const client = new OpenRouterClient({ apiKey: "test" });
+    const config = resolveRetryConfig({ initialDelayMs: 0, maxDelayMs: 0 });
+    const budget = createRetryBudget(config);
+    const chunks: unknown[] = [];
+    for await (const c of client.completeStream(
+      { messages: [{ role: "user", content: "hi" }] },
+      { retryBudget: budget, retryConfig: config },
+    )) {
+      chunks.push(c);
+    }
+    expect(calls.length).toBe(2);
+    expect(chunks.length).toBeGreaterThan(0);
+  });
+
+  test("does not retry on 401", async () => {
+    global.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: { message: "bad key" } }), { status: 401 })
+    ) as unknown as typeof fetch;
+
+    const client = new OpenRouterClient({ apiKey: "test" });
+    const config = resolveRetryConfig({ initialDelayMs: 0, maxDelayMs: 0 });
+    const budget = createRetryBudget(config);
+    const iter = client.completeStream(
+      { messages: [{ role: "user", content: "hi" }] },
+      { retryBudget: budget, retryConfig: config },
+    );
+    await expect(iter.next()).rejects.toMatchObject({ name: "OpenRouterError", code: 401 });
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+
+  test("populates retryAfterMs from Retry-After header", async () => {
+    global.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+        status: 429,
+        headers: { "Retry-After": "5" },
+      })
+    ) as unknown as typeof fetch;
+
+    const client = new OpenRouterClient({ apiKey: "test" });
+    const config = resolveRetryConfig({ maxAttempts: 1 });
+    const budget = createRetryBudget(config);
+    const iter = client.completeStream(
+      { messages: [{ role: "user", content: "hi" }] },
+      { retryBudget: budget, retryConfig: config },
+    );
+    await expect(iter.next()).rejects.toMatchObject({
+      name: "OpenRouterError",
+      code: 429,
+      retryAfterMs: 5000,
+    });
+  });
+
+  test("suppresses StreamTruncatedError when a terminal finish_reason was seen", async () => {
+    global.fetch = vi.fn(async () =>
+      new Response(
+        sseBody(
+          `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"finish_reason":"stop","native_finish_reason":"stop","delta":{"content":"hi"}}]}\n\n`,
+        ),
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    ) as unknown as typeof fetch;
+
+    const client = new OpenRouterClient({ apiKey: "test" });
+    const chunks: unknown[] = [];
+    for await (const c of client.completeStream({ messages: [{ role: "user", content: "hi" }] })) {
+      chunks.push(c);
+    }
+    expect(chunks.length).toBe(1);
+  });
+
+  test("propagates StreamTruncatedError when no terminal finish_reason was seen", async () => {
+    const { StreamTruncatedError } = await import("../../src/openrouter/errors.js");
+    global.fetch = vi.fn(async () =>
+      new Response(
+        sseBody(
+          `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"finish_reason":null,"native_finish_reason":null,"delta":{"content":"par"}}]}\n\n`,
+        ),
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    ) as unknown as typeof fetch;
+
+    const client = new OpenRouterClient({ apiKey: "test" });
+    const config = resolveRetryConfig({ maxAttempts: 1 });
+    const budget = createRetryBudget(config);
+    const iter = client.completeStream(
+      { messages: [{ role: "user", content: "hi" }] },
+      { retryBudget: budget, retryConfig: config },
+    );
+    const first = await iter.next();
+    expect(first.done).toBe(false);
+    await expect(iter.next()).rejects.toBeInstanceOf(StreamTruncatedError);
   });
 });
