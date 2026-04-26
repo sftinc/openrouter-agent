@@ -44,7 +44,7 @@ export interface SessionStore {
    * Load persisted messages for a session.
    *
    * @param sessionId - Opaque identifier supplied by the caller of
-   *   `Agent.run` / `Agent.runStream`.
+   *   `Agent.run`.
    * @returns A promise resolving to the array of {@link Message} objects in
    *   conversation order, or `null` if no session has been persisted under
    *   `sessionId` yet. Implementations should return a defensive copy so

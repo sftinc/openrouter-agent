@@ -5,3 +5,14 @@ coverage/
 .env
 .env.local
 .DS_Store
+
+.claude/
+
+# Only docs/api/ (hand-written API reference) and docs/openrouter/
+# (upstream wire reference, source of truth per CLAUDE.md) are tracked.
+# Everything else under docs/ is local-only.
+docs/*
+!docs/api/
+!docs/api/**
+!docs/openrouter/
+!docs/openrouter/**

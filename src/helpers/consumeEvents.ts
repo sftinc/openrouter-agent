@@ -47,8 +47,8 @@ export interface AgentEventHandlers {
 /**
  * Consume an agent event stream, dispatching to typed handlers.
  *
- * @param source Any `AsyncIterable<AgentEvent>` — typically the return value
- *   of `agent.runStream(...)`, an HTTP NDJSON parse loop, or a buffered
+ * @param source Any `AsyncIterable<AgentEvent>` — typically an `AgentRun`
+ *   handle from `agent.run(...)`, an HTTP NDJSON parse loop, or a buffered
  *   replay.
  * @param handlers Optional per-variant handlers plus an optional `onAny`.
  * @returns A promise that resolves once `source` completes normally and
@@ -57,7 +57,7 @@ export interface AgentEventHandlers {
  *
  * @example
  * ```ts
- * await consumeAgentEvents(agent.runStream("hello"), {
+ * await consumeAgentEvents(agent.run("hello"), {
  *   onAgentStart: () => console.log("Thinking…"),
  *   onToolStart:  (e) => console.log("→", e.toolName),
  *   onToolEnd:    (e) => console.log("✓", e.elapsedMs, "ms"),

@@ -78,7 +78,7 @@ const NDJSON_DEFAULT_HEADERS: Record<string, string> = {
  *
  * http.createServer(async (req, res) => {
  *   const abort = new AbortController();
- *   const stream = agent.runStream("hello", { signal: abort.signal });
+ *   const stream = agent.run("hello", { signal: abort.signal });
  *   await pipeEventsToNodeResponse(stream, res, { abort });
  * }).listen(3000);
  * ```
@@ -131,7 +131,7 @@ export async function pipeEventsToNodeResponse(
  * export default {
  *   async fetch(req: Request): Promise<Response> {
  *     const abort = new AbortController();
- *     const stream = agent.runStream("hello", { signal: abort.signal });
+ *     const stream = agent.run("hello", { signal: abort.signal });
  *     return eventsToWebResponse(stream, { abort });
  *   },
  * };

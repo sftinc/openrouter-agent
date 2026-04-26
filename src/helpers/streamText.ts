@@ -14,15 +14,15 @@ import type { AgentEvent } from "../agent/events.js";
  * carries string content, yields that content as a single trailing chunk.
  * Tool calls and reasoning content are not yielded.
  *
- * @param source Any `AsyncIterable<AgentEvent>` — typically the return value
- *   of `agent.runStream(...)` or an `AgentRun` handle.
+ * @param source Any `AsyncIterable<AgentEvent>` — typically an `AgentRun`
+ *   handle returned from `agent.run(...)`.
  * @returns An async iterable of plain text chunks. Empty deltas are skipped.
  *
  * @example
  * ```ts
  * import { streamText } from "@sftinc/openrouter-agent";
  *
- * for await (const chunk of streamText(agent.runStream("hello"))) {
+ * for await (const chunk of streamText(agent.run("hello"))) {
  *   process.stdout.write(chunk);
  * }
  * ```

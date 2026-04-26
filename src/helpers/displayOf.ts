@@ -22,7 +22,7 @@ import { defaultDisplay } from "../agent/events.js";
  * ```ts
  * import { displayOf } from "@sftinc/openrouter-agent";
  *
- * for await (const event of agent.runStream("hello")) {
+ * for await (const event of agent.run("hello")) {
  *   const { title, content } = displayOf(event);
  *   console.log(title, content ?? "");
  * }

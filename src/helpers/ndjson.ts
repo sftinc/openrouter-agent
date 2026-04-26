@@ -39,14 +39,14 @@ export function serializeEvent(event: AgentEvent): string {
  * without re-throwing.
  *
  * @param source Any `AsyncIterable<AgentEvent>` — typically an `AgentRun`
- *   handle or `agent.runStream(...)`.
+ *   handle returned from `agent.run(...)`.
  * @returns An async iterable of NDJSON-framed lines.
  *
  * @example
  * ```ts
  * import { serializeEventsAsNDJSON } from "./helpers";
  *
- * for await (const line of serializeEventsAsNDJSON(agent.runStream("hello"))) {
+ * for await (const line of serializeEventsAsNDJSON(agent.run("hello"))) {
  *   res.write(line); // each line is a complete JSON object followed by \n
  * }
  * ```

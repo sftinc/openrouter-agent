@@ -24,8 +24,9 @@
  *   helpers ({@link consumeAgentEvents}, {@link AgentEventHandlers},
  *   {@link displayOf}).
  * - **Sessions** — the {@link SessionStore} interface, the bundled
- *   {@link InMemorySessionStore}, and the {@link SessionBusyError} thrown when
- *   a second concurrent run is started for the same `sessionId`.
+ *   {@link InMemorySessionStore}, and the {@link SessionBusyError} thrown
+ *   *synchronously* from `Agent.run()` when a second concurrent run is started
+ *   for the same `sessionId` (wrap the call site, not the `await`).
  * - **Conversation types** — wire-shape primitives ({@link Message},
  *   {@link ContentPart}, {@link ToolCall}, {@link Usage}) and the
  *   {@link Result} returned from `Agent.run()`.
@@ -77,11 +78,13 @@
  * ```
  *
  * @example
- * Streaming events from a run:
+ * Streaming events from a run. `agent.run()` returns an {@link AgentRun}
+ * handle that is both `PromiseLike<Result>` and `AsyncIterable<AgentEvent>`,
+ * so the same call site can be either awaited or iterated:
  * ```ts
  * import type { AgentEvent } from "@sftinc/openrouter-agent";
  *
- * for await (const event of agent.runStream("hello", { sessionId: "user-42" })) {
+ * for await (const event of agent.run("hello", { sessionId: "user-42" })) {
  *   if (event.type === "tool:start") console.log("→", event.toolName);
  *   if (event.type === "agent:end")  console.log("stop:", event.result.stopReason);
  * }
@@ -176,13 +179,16 @@ export type { ToolConfig, ToolDisplayHooks, ToolDeps, ToolResult } from "./tool/
  * Re-exports the {@link Agent} class — owner of the run loop, the tool
  * registry, and the session store. An `Agent` reads the project's
  * {@link OpenRouterClient} (registered via {@link setOpenRouterClient}) at
- * construction time and exposes both `run` (awaits the final {@link Result})
- * and `runStream` (yields {@link AgentEvent}s as they happen).
+ * construction time and exposes a single run method: `agent.run(input, options?)`
+ * returns an {@link AgentRun} handle that is *both* `PromiseLike<Result>` and
+ * `AsyncIterable<AgentEvent>`. Either `await` it for the final {@link Result},
+ * or `for await` it to observe {@link AgentEvent}s as they happen — choose
+ * one consumption shape per call (a single `AgentRun` is single-consumer).
  *
  * `Agent` also extends {@link Tool}, so an agent can be passed straight into
  * another agent's `tools` array as a subagent.
  */
-export { Agent } from "./agent/index.js";
+export { Agent, AgentRun } from "./agent/index.js";
 /**
  * Agent type surface.
  *
@@ -192,9 +198,11 @@ export { Agent } from "./agent/index.js";
  * - {@link AgentConfig} — constructor argument for `new Agent(...)`
  *   (`name`, `description`, optional `client` / `systemPrompt` / `tools` /
  *   `inputSchema` / `maxTurns` / `sessionStore` / `display`).
- * - {@link AgentRunOptions} — second argument to `agent.run` and
- *   `agent.runStream` (`sessionId`, `system`, `signal`, `maxTurns`,
- *   per-run `client` overrides, internal `parentRunId`).
+ * - {@link AgentRunOptions} — second argument to `agent.run`
+ *   (`sessionId`, `system`, `signal`, `maxTurns`, per-run `client`
+ *   overrides, internal `parentRunId`).
+ * - {@link AgentRun} — the handle returned from `agent.run`; satisfies both
+ *   `PromiseLike<Result>` and `AsyncIterable<AgentEvent>`.
  */
 export type { AgentConfig, AgentRunOptions } from "./agent/index.js";
 /**
@@ -206,9 +214,11 @@ export type { AgentConfig, AgentRunOptions } from "./agent/index.js";
  *   suitable for local development and single-process servers. Production
  *   deployments should implement {@link SessionStore} on top of Redis,
  *   Postgres, or similar.
- * - {@link SessionBusyError} — thrown from `Agent.runStream` (on the first
- *   `.next()`) when a second concurrent run is started for the same
- *   `sessionId`. Surface this as HTTP 409 from your server.
+ * - {@link SessionBusyError} — thrown *synchronously* from `Agent.run()`
+ *   (before the {@link AgentRun} handle is returned) when a second
+ *   concurrent run is started for the same `sessionId`. Wrap the call site
+ *   in a `try/catch` rather than wrapping the `await`. Surface this as HTTP
+ *   409 from your server.
  */
 export {
   InMemorySessionStore,
