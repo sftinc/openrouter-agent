@@ -24,6 +24,7 @@ import type {
 } from './types.js'
 import { DEFAULT_MODEL } from './types.js'
 import { parseSseStream } from './sse.js'
+import { parseRetryAfter } from './retry.js'
 
 /**
  * Error thrown by {@link OpenRouterClient} when OpenRouter returns a non-2xx
@@ -59,6 +60,13 @@ export class OpenRouterError extends Error {
 	readonly body?: unknown
 	/** Provider-specific extra detail extracted from `body.error.metadata`. */
 	readonly metadata?: Record<string, unknown>
+	/**
+	 * Milliseconds to wait before retrying, parsed from the `Retry-After`
+	 * response header. Used by the retry helper as a lower bound on the next
+	 * backoff delay (re-capped at the configured `maxDelayMs`). `undefined`
+	 * when the header was absent or unparseable.
+	 */
+	readonly retryAfterMs?: number
 
 	/**
 	 * @param params Constructor params.
@@ -66,13 +74,21 @@ export class OpenRouterError extends Error {
 	 * @param params.message Human-readable message (becomes `Error.message`).
 	 * @param params.body Optional parsed response body.
 	 * @param params.metadata Optional provider metadata.
+	 * @param params.retryAfterMs Optional parsed `Retry-After` header in milliseconds.
 	 */
-	constructor(params: { code: number; message: string; body?: unknown; metadata?: Record<string, unknown> }) {
+	constructor(params: {
+		code: number
+		message: string
+		body?: unknown
+		metadata?: Record<string, unknown>
+		retryAfterMs?: number
+	}) {
 		super(params.message)
 		this.name = 'OpenRouterError'
 		this.code = params.code
 		this.body = params.body
 		this.metadata = params.metadata
+		this.retryAfterMs = params.retryAfterMs
 	}
 }
 
@@ -260,6 +276,7 @@ export class OpenRouterClient {
 				message,
 				body: errBody,
 				metadata,
+				retryAfterMs: parseRetryAfter(response.headers.get('Retry-After')),
 			})
 		}
 
@@ -360,6 +377,7 @@ export class OpenRouterClient {
 				message,
 				body: errBody,
 				metadata,
+				retryAfterMs: parseRetryAfter(response.headers.get('Retry-After')),
 			})
 		}
 

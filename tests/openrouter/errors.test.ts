@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { StreamTruncatedError, IdleTimeoutError } from "../../src/openrouter/errors.js";
+import { OpenRouterError } from "../../src/openrouter/client.js";
 
 describe("StreamTruncatedError", () => {
   test("carries name, message, generationId, and partialContentLength", () => {
@@ -29,5 +30,21 @@ describe("IdleTimeoutError", () => {
     expect(err.name).toBe("IdleTimeoutError");
     expect(err.message).toBe("idle for 60000ms");
     expect(err.idleMs).toBe(60_000);
+  });
+});
+
+describe("OpenRouterError", () => {
+  test("carries optional retryAfterMs", () => {
+    const err = new OpenRouterError({
+      code: 429,
+      message: "rate limited",
+      retryAfterMs: 3000,
+    });
+    expect(err.retryAfterMs).toBe(3000);
+  });
+
+  test("retryAfterMs defaults to undefined when not provided", () => {
+    const err = new OpenRouterError({ code: 500, message: "boom" });
+    expect(err.retryAfterMs).toBeUndefined();
   });
 });
