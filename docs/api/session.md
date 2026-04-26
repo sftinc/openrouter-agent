@@ -8,38 +8,11 @@ The session layer provides pluggable conversation persistence so that successive
 import {
   InMemorySessionStore,
   SessionBusyError,
-  type SessionRecord,
   type SessionStore,
 } from "@sftinc/openrouter-agent";
 ```
 
-`SessionStore` and `SessionRecord` are type-only; `InMemorySessionStore` and `SessionBusyError` are value exports. All are re-exported from the package entrypoint at `src/index.ts:213-227` and originate from the folder index `src/session/index.ts:19-21`.
-
-## `SessionRecord` type
-
-Defined at `src/session/SessionRecord.ts:3-40`.
-
-`SessionRecord` is the persisted session shape returned by `SessionStore.get`. It wraps the conversation `messages` array with two ISO-8601 timestamps so backends can drive TTL eviction, audit trails, or "recently active" surfaces without inventing their own metadata layer. Timestamps are always set by the store implementation, never by the agent loop.
-
-### Properties
-
-| Property    | Type      | Description                                                                                                                          |
-| ----------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `messages`  | `Message[]` | Full conversation history for this session, in wire order. Excludes `system` messages (those live on the `Agent` config, not on the session). |
-| `createdAt` | `string`  | ISO-8601 UTC string captured on the **first** write for this `sessionId`. Immutable across subsequent writes.                         |
-| `updatedAt` | `string`  | ISO-8601 UTC string captured on the **most recent** write. Refreshed by every successful `set`. Used by `InMemorySessionStore` and other TTL-aware backends to decide whether an entry is stale. |
-
-### Example
-
-```ts
-import type { SessionRecord } from "@sftinc/openrouter-agent";
-
-const record: SessionRecord = {
-  messages: [{ role: "user", content: "hi" }],
-  createdAt: "2026-04-26T18:23:11.044Z",
-  updatedAt: "2026-04-26T18:23:11.044Z",
-};
-```
+The `SessionStore` symbol is type-only; `InMemorySessionStore` and `SessionBusyError` are value exports. All three are re-exported from the package entrypoint at `src/index.ts:213-227` and originate from the folder index `src/session/index.ts:19-21`.
 
 ## `SessionStore` interface
 
@@ -351,9 +324,8 @@ export class PgSessionStore implements SessionStore {
 
 ## Internal helpers
 
-There are no internal helpers under `src/session/`. The folder contains exactly four source files:
+There are no internal helpers under `src/session/`. The folder contains exactly three source files:
 
-- `src/session/SessionRecord.ts` — the `SessionRecord` type (type-only export).
 - `src/session/SessionStore.ts` — the `SessionStore` interface (type-only export).
 - `src/session/InMemorySessionStore.ts` — the bundled `Map`-backed implementation.
 - `src/session/SessionBusyError.ts` — the busy-session error class.
