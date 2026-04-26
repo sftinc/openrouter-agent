@@ -1008,3 +1008,168 @@ describe("Usage accumulation — multimodal & cost", () => {
     });
   });
 });
+
+describe("runLoop — retry behavior", () => {
+  function buildBaseConfig(overrides: Partial<RunLoopConfig> = {}): RunLoopConfig {
+    return {
+      agentName: "test-agent",
+      client: {},
+      tools: [],
+      maxTurns: 3,
+      openrouter: {
+        completeStream: () => mockStream(mockChunks({ content: "hi" })),
+      },
+      ...overrides,
+    };
+  }
+
+  test("retries on transient failure before any content delta and succeeds", async () => {
+    let calls = 0;
+    const config = buildBaseConfig({
+      openrouter: {
+        completeStream: () => {
+          calls++;
+          if (calls < 3) {
+            return (async function* () {
+              throw new Error("ECONNRESET");
+            })();
+          }
+          return mockStream(mockChunks({ content: "hi" }));
+        },
+      },
+    });
+    const events: AgentEvent[] = [];
+    await runLoop(
+      config,
+      "x",
+      { retry: { maxAttempts: 5, initialDelayMs: 0, maxDelayMs: 0 } },
+      (e) => events.push(e),
+    );
+    const retryEvents = events.filter((e) => e.type === "retry");
+    const errorEvents = events.filter((e) => e.type === "error");
+    const endEvents = events.filter((e) => e.type === "agent:end");
+    expect(retryEvents).toHaveLength(2);
+    expect(errorEvents).toHaveLength(0);
+    expect(endEvents[0]?.type === "agent:end" && endEvents[0].result.stopReason).toBe("done");
+    expect(calls).toBe(3);
+  });
+
+  test("does not retry after a message:delta has been emitted", async () => {
+    let calls = 0;
+    const config = buildBaseConfig({
+      openrouter: {
+        completeStream: () => {
+          calls++;
+          return (async function* () {
+            yield {
+              id: "gen-1",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "m",
+              choices: [{
+                finish_reason: null,
+                native_finish_reason: null,
+                delta: { content: "partial" },
+              }],
+            } as CompletionChunk;
+            throw new Error("ECONNRESET");
+          })();
+        },
+      },
+    });
+    const events: AgentEvent[] = [];
+    await runLoop(
+      config,
+      "x",
+      { retry: { maxAttempts: 5, initialDelayMs: 0, maxDelayMs: 0 } },
+      (e) => events.push(e),
+    );
+    const retryEvents = events.filter((e) => e.type === "retry");
+    const errorEvents = events.filter((e) => e.type === "error");
+    expect(retryEvents).toHaveLength(0);
+    expect(errorEvents).toHaveLength(1);
+    expect(calls).toBe(1);
+  });
+
+  test("translates chunk.error before any delta into a retryable error", async () => {
+    let calls = 0;
+    const config = buildBaseConfig({
+      openrouter: {
+        completeStream: () => {
+          calls++;
+          if (calls === 1) {
+            return (async function* () {
+              yield {
+                id: "gen-1",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "m",
+                choices: [{
+                  finish_reason: null,
+                  native_finish_reason: null,
+                  delta: {},
+                  error: { code: 503, message: "transient" },
+                }],
+              } as unknown as CompletionChunk;
+            })();
+          }
+          return mockStream(mockChunks({ content: "hi" }));
+        },
+      },
+    });
+    const events: AgentEvent[] = [];
+    await runLoop(
+      config,
+      "x",
+      { retry: { maxAttempts: 3, initialDelayMs: 0, maxDelayMs: 0 } },
+      (e) => events.push(e),
+    );
+    const retryEvents = events.filter((e) => e.type === "retry");
+    expect(retryEvents).toHaveLength(1);
+    expect(calls).toBe(2);
+  });
+
+  test("emits exactly one error event when budget is exhausted (no retry event for give-up)", async () => {
+    const config = buildBaseConfig({
+      openrouter: {
+        completeStream: () =>
+          (async function* () {
+            throw new Error("ECONNRESET");
+          })(),
+      },
+    });
+    const events: AgentEvent[] = [];
+    await runLoop(
+      config,
+      "x",
+      { retry: { maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0 } },
+      (e) => events.push(e),
+    );
+    const retryEvents = events.filter((e) => e.type === "retry");
+    const errorEvents = events.filter((e) => e.type === "error");
+    expect(retryEvents).toHaveLength(1);
+    expect(errorEvents).toHaveLength(1);
+  });
+
+  test("respects maxAttempts: 1 (no retries)", async () => {
+    let calls = 0;
+    const config = buildBaseConfig({
+      openrouter: {
+        completeStream: () => {
+          calls++;
+          return (async function* () { throw new Error("ECONNRESET"); })();
+        },
+      },
+    });
+    const events: AgentEvent[] = [];
+    await runLoop(
+      config,
+      "x",
+      { retry: { maxAttempts: 1, initialDelayMs: 0, maxDelayMs: 0 } },
+      (e) => events.push(e),
+    );
+    expect(calls).toBe(1);
+    expect(events.filter((e) => e.type === "retry")).toHaveLength(0);
+    expect(events.filter((e) => e.type === "error")).toHaveLength(1);
+  });
+});

@@ -15,12 +15,20 @@ import type {
   OpenRouterTool,
   ToolCallDelta,
 } from "../openrouter/index.js";
+import type { CompleteStreamOptions } from "../openrouter/client.js";
 import type { ToolCall } from "../types/index.js";
 import type { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
 import type { AgentDisplayHooks, AgentEvent, EventDisplay, EventEmit } from "./events.js";
 import { generateId, mergeNumericRecords, buildToolResultMessage, buildToolErrorMessage } from "../lib/index.js";
+import {
+  withRetry,
+  createRetryBudget,
+  resolveRetryConfig,
+  RetryableProviderError,
+  type RetryConfig,
+} from "../openrouter/retry.js";
 
 /**
  * Mapping from OpenRouter `finish_reason` values that indicate a clean,
@@ -64,7 +72,7 @@ export interface RunLoopConfig {
      */
     completeStream: (
       request: { messages: Message[]; tools?: OpenRouterTool[] } & LLMConfig,
-      signal?: AbortSignal
+      signalOrOptions?: AbortSignal | CompleteStreamOptions
     ) => AsyncIterable<CompletionChunk>;
   };
   /**
@@ -74,6 +82,12 @@ export interface RunLoopConfig {
   parentRunId?: string;
   /** Optional display hooks merged into lifecycle events. */
   display?: AgentDisplayHooks;
+  /**
+   * Optional default retry policy applied to every turn's LLM call.
+   * Per-call overrides via {@link RunLoopOptions.retry} merge on top of this.
+   * Falls through to `DEFAULT_RETRY_CONFIG` when both are unset.
+   */
+  retry?: RetryConfig;
 }
 
 /**
@@ -104,6 +118,11 @@ export interface RunLoopOptions {
   client?: LLMConfig;
   /** Outer run id when this run is a subagent invocation. Wins over {@link RunLoopConfig.parentRunId}. */
   parentRunId?: string;
+  /**
+   * Per-call retry override. Merged field-by-field on top of
+   * {@link RunLoopConfig.retry}, then on top of `DEFAULT_RETRY_CONFIG`.
+   */
+  retry?: RetryConfig;
 }
 
 /**
@@ -668,46 +687,117 @@ export async function runLoop(
     getMessages: () => messages.slice(),
   };
 
+  // Resolve retry config once for the whole run; per-turn budgets are
+  // allocated fresh inside the loop.
+  const retryConfig = resolveRetryConfig({ ...(config.retry ?? {}), ...(options.retry ?? {}) });
+
   for (let turn = 0; turn < maxTurns; turn++) {
     if (signal?.aborted) {
       stopReason = "aborted";
       break;
     }
 
+    const budget = createRetryBudget(retryConfig);
+
+    // Per-attempt buffers — re-initialized every retry so half-finished state
+    // never leaks across attempts. The accumulated `generationIds` array is
+    // shared so failed attempts that received an id are still recorded.
     let contentBuf = "";
-    const toolCallBuf = new Map<number, ToolCallDelta>();
+    let toolCallBuf = new Map<number, ToolCallDelta>();
     let finishReason: string | null = null;
     let turnError: { code?: number; message: string; metadata?: Record<string, unknown> } | undefined;
     let generationId: string | null = null;
     let turnUsage: Usage | undefined;
+    let hasEmittedContentDelta = false;
 
     try {
-      for await (const chunk of config.openrouter.completeStream(
-        { ...overrides, messages: wireMessages(), tools: openrouterTools },
-        signal
-      )) {
-        if (!generationId && chunk.id) generationId = chunk.id;
-        if (chunk.usage) turnUsage = chunk.usage;
+      await withRetry(
+        async (attempt) => {
+          if (attempt > 1) {
+            contentBuf = "";
+            toolCallBuf = new Map();
+            finishReason = null;
+            turnError = undefined;
+            generationId = null;
+            turnUsage = undefined;
+          }
 
-        const sc = chunk.choices[0];
-        if (!sc) continue;
+          for await (const chunk of config.openrouter.completeStream(
+            { ...overrides, messages: wireMessages(), tools: openrouterTools },
+            { signal, retryBudget: budget, retryConfig }
+          )) {
+            if (!generationId && chunk.id) generationId = chunk.id;
+            if (chunk.usage) turnUsage = chunk.usage;
 
-        if (typeof sc.delta.content === "string" && sc.delta.content.length > 0) {
-          contentBuf += sc.delta.content;
-          emit({ type: "message:delta", runId, text: sc.delta.content });
+            const sc = chunk.choices[0];
+            if (!sc) continue;
+
+            if (typeof sc.delta.content === "string" && sc.delta.content.length > 0) {
+              contentBuf += sc.delta.content;
+              hasEmittedContentDelta = true;
+              emit({ type: "message:delta", runId, text: sc.delta.content });
+            }
+            if (sc.delta.tool_calls) {
+              for (const d of sc.delta.tool_calls) mergeToolCallDelta(toolCallBuf, d);
+            }
+            if (sc.finish_reason) finishReason = sc.finish_reason;
+            if (sc.error) {
+              turnError = {
+                code: sc.error.code,
+                message: sc.error.message,
+                metadata: sc.error.metadata,
+              };
+            }
+          }
+
+          // Translate provider-side errors into a retryable surface IF still
+          // inside the B2 window. Past B2, fall through to the existing error
+          // path (loop handles `turnError`/`finishReason: "error"` after this
+          // try-block).
+          if (!hasEmittedContentDelta) {
+            if (turnError) {
+              throw new RetryableProviderError({
+                message: turnError.message,
+                code: turnError.code,
+                metadata: turnError.metadata,
+              });
+            }
+            if (finishReason === "error") {
+              throw new RetryableProviderError({
+                message: "Unknown error from provider",
+              });
+            }
+          }
+        },
+        {
+          budget,
+          // Wrap the configured `isRetryable` so that once we have emitted a
+          // content delta this turn (past the B2 boundary), no error is
+          // retryable — the loop must surface it to the caller.
+          config: {
+            ...retryConfig,
+            isRetryable: (e: unknown) =>
+              !hasEmittedContentDelta && retryConfig.isRetryable(e),
+          },
+          signal,
+          onRetry: (info) => {
+            if (generationId) generationIds.push(generationId);
+            const errAny = info.error as { code?: number; message?: string; metadata?: Record<string, unknown> };
+            emit({
+              type: "retry",
+              runId,
+              turn,
+              attempt: info.attempt,
+              delayMs: info.delayMs,
+              error: {
+                code: errAny.code,
+                message: errAny.message ?? String(info.error),
+                metadata: errAny.metadata,
+              },
+            });
+          },
         }
-        if (sc.delta.tool_calls) {
-          for (const d of sc.delta.tool_calls) mergeToolCallDelta(toolCallBuf, d);
-        }
-        if (sc.finish_reason) finishReason = sc.finish_reason;
-        if (sc.error) {
-          turnError = {
-            code: sc.error.code,
-            message: sc.error.message,
-            metadata: sc.error.metadata,
-          };
-        }
-      }
+      );
     } catch (err) {
       if (signal?.aborted) {
         stopReason = "aborted";

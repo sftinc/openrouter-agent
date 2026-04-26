@@ -85,6 +85,7 @@ export function defaultIsRetryable(err: unknown): boolean {
 	if (err.name === 'AbortError') return false
 	if (err instanceof StreamTruncatedError) return true
 	if (err instanceof IdleTimeoutError) return true
+	if (err instanceof RetryableProviderError) return true
 	if (err instanceof OpenRouterError) return RETRYABLE_STATUS.has(err.code)
 	return true
 }
@@ -344,5 +345,32 @@ export async function withRetry<T>(
 			budget.remaining--
 			await sleep(delayMs, signal)
 		}
+	}
+}
+
+/**
+ * Synthetic error class the agent loop throws to mark a mid-stream provider
+ * error (`chunk.error` or `finish_reason: "error"`) as retryable. Only the
+ * loop emits this; outside callers should treat it the same as any
+ * provider-side error.
+ */
+export class RetryableProviderError extends Error {
+	/** Discriminator (`Error.name`). */
+	readonly name = 'RetryableProviderError' as const
+	/** Provider-supplied error code (typically HTTP-style). */
+	readonly code?: number
+	/** Provider metadata, when available. */
+	readonly metadata?: Record<string, unknown>
+
+	/**
+	 * @param params Constructor params.
+	 * @param params.message Human-readable message.
+	 * @param params.code Optional provider error code.
+	 * @param params.metadata Optional provider metadata.
+	 */
+	constructor(params: { message: string; code?: number; metadata?: Record<string, unknown> }) {
+		super(params.message)
+		this.code = params.code
+		this.metadata = params.metadata
 	}
 }
