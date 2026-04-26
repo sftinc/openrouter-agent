@@ -346,7 +346,7 @@ Source: `src/agent/events.ts:46-75`. Optional hooks on `AgentConfig.display` tha
 | `success` | `(result: Result) => Partial<EventDisplay>` | no | Called when emitting `agent:end` with `stopReason === "done"`. Falls back to `end` if omitted. |
 | `error` | `(result: Result) => Partial<EventDisplay>` | no | Called when emitting `agent:end` with `stopReason === "error"`. Falls back to `end` if omitted. |
 | `end` | `(result: Result) => Partial<EventDisplay>` | no | Universal terminal-state hook. Used for `aborted`, `max_turns`, `length`, `content_filter`, and as the fallback for `done` / `error` when the dedicated hooks are absent. |
-| `retry` | `(info: { turn: number; attempt: number; delayMs: number; error: { code?: number; message: string } }) => Partial<EventDisplay>` | no | Called when emitting a `retry` event. Receives the same data attached to the event. Use to render UI like `"Retrying… (attempt 2/3)"`. Optional, no built-in default. Falls back to `defaultDisplay` when omitted. |
+| `retry` | `(info: { turn: number; attempt: number; delayMs: number; error: { code?: number; message: string } }) => Partial<EventDisplay>` | no | Called when emitting a `retry` event. Receives the same data attached to the event. Use to render UI like `"Retrying… (attempt 2/3)"`. Optional, no built-in default. Falls back to `defaultDisplay` when omitted. `delayMs` is the *scheduled* backoff — if the run is aborted during the sleep, the next attempt will not actually fire and an `agent:end` with `stopReason: "aborted"` will follow. |
 
 **Outcome routing for `agent:end`** (`src/agent/loop.ts:283-290`):
 
@@ -425,7 +425,7 @@ Source: `src/types/Message.ts:303-309`.
 
 Each turn allocates a fresh `RetryBudget` from the resolved `RetryConfig` (per-run override merged on top of `AgentConfig.retry`, with built-in defaults filling any unset fields). The same budget is shared across the two retry layers — the OpenRouter client (connection-level: 4xx-retryable / 5xx / pre-headers transport errors) and the agent loop (stream-level: `StreamTruncatedError`, `IdleTimeoutError`, mid-stream provider errors observed before any `message:delta`). **Budgets do not compound across layers.**
 
-The retry window for a turn is open until the first `message:delta` is emitted. Concretely, the loop tracks `hasEmittedContentDelta` (set the first time `message:delta` is emitted for the current turn). Failures with `hasEmittedContentDelta === false` are eligible for retry; failures with `hasEmittedContentDelta === true` fall through to the existing error path (`stopReason: "error"`, no session persistence, client keeps the partial output it already received).
+The retry window for a turn is open until the first `message:delta` is emitted. Concretely, the loop tracks `hasEmittedContentDelta` (set the first time `message:delta` is emitted for the current turn). Failures with `hasEmittedContentDelta === false` are eligible for retry; failures with `hasEmittedContentDelta === true` fall through to the existing error path (`stopReason: "error"`, no session persistence, client keeps the partial output it already received). The flag is **sticky across attempts within the same turn** — once any delta has reached the consumer the boundary is crossed permanently for that turn, regardless of what later attempts do.
 
 Backoff:
 

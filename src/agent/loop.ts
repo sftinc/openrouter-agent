@@ -708,6 +708,9 @@ export async function runLoop(
     let turnError: { code?: number; message: string; metadata?: Record<string, unknown> } | undefined;
     let generationId: string | null = null;
     let turnUsage: Usage | undefined;
+    // Sticky across attempts within a turn: once any content delta has been
+    // emitted to the consumer, the B2 boundary is crossed permanently for
+    // this turn and retries must stop. Do NOT reset this on `attempt > 1`.
     let hasEmittedContentDelta = false;
 
     try {

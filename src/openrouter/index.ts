@@ -70,7 +70,6 @@ export { StreamTruncatedError, IdleTimeoutError } from "./errors.js";
  */
 export {
   defaultIsRetryable,
-  DEFAULT_RETRY_CONFIG,
   RetryableProviderError,
 } from "./retry.js";
 

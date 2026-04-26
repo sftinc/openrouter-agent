@@ -742,7 +742,11 @@ Returns `true` for:
 Returns `false` for:
 - `AbortError` (always — user cancellation).
 - `OpenRouterError` whose `code` is in `400`, `401`, `403`, `404`, `409`, `422`, or any other non-retryable 4xx not listed above.
-- Any error synthesized from `finish_reason: "content_filter"`.
+- Any non-`Error` value (`undefined`, `null`, strings, numbers, plain objects).
+
+Note: this predicate retries any `Error` that doesn't match a more-specific case above, including bug-class errors like `TypeError` or `SyntaxError`. The intent is to cover unknown platform-level network failures, but it does mean a deterministically-buggy code path will be retried up to `maxAttempts` times before surfacing. Override `RetryConfig.isRetryable` to narrow if needed.
+
+Note: `finish_reason: "content_filter"` is treated as a clean terminal state (`stopReason: "content_filter"`), not an error — it is never seen by this predicate.
 
 ### `StreamTruncatedError`
 

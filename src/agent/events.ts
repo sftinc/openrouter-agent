@@ -76,6 +76,11 @@ export interface AgentDisplayHooks {
    * Called when emitting a `retry` event. Receives the same data attached to
    * the event. Use to render UI like `"Retrying… (attempt 2/3)"`. If omitted,
    * the loop falls back to {@link defaultDisplay}.
+   *
+   * Note: `delayMs` is the *scheduled* backoff. If the run is aborted during
+   * the sleep window, the displayed next attempt will not actually fire — an
+   * `agent:end` with `stopReason: "aborted"` will follow instead. UIs that
+   * persist this title should clear or replace it on the terminal event.
    */
   retry?: (info: {
     turn: number;

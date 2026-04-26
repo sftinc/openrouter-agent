@@ -67,6 +67,12 @@ const RETRYABLE_STATUS = new Set<number>([408, 429, 500, 502, 503, 504])
  * non-retryable HTTP codes (4xx other than `408`/`429`), and non-Error
  * values.
  *
+ * **Caveat:** the "any other `Error`" branch also matches bug-class errors
+ * (`TypeError`, `SyntaxError` from a malformed SSE frame, etc.) — these
+ * will be retried up to `maxAttempts` times before surfacing. The intent
+ * is to cover unknown platform-level network failures; if you need
+ * tighter control, override via {@link RetryConfig.isRetryable}.
+ *
  * @param err The thrown value (could be anything — predicate handles all
  *   types defensively).
  * @returns `true` if the retry helper should retry; `false` to surface

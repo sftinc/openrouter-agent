@@ -315,6 +315,10 @@ export class OpenRouterClient {
 			: this.retry
 		const budget = opts.retryBudget ?? createRetryBudget(config)
 
+		// Connection-level retry. Only governs the fetch + non-2xx response
+		// path; once any chunk has been yielded the loop layer takes over.
+		// The B2 boundary (no retry past the first content delta) cannot be
+		// crossed at this layer because no chunks have been observed yet.
 		const response = await withRetry(
 			async () => {
 				const headers: Record<string, string> = {
