@@ -54,3 +54,24 @@ export { setOpenRouterClient, getOpenRouterClient } from "./default.js";
  * directly without going through the client.
  */
 export { parseSseStream } from "./sse.js";
+
+/**
+ * Stream-level error classes raised from the SSE consumer when the upstream
+ * response is dropped or wedged. See `./errors.ts`.
+ */
+export { StreamTruncatedError, IdleTimeoutError } from "./errors.js";
+
+/**
+ * Retry surface — see `./retry.ts`. {@link RetryConfig} is the public knobs
+ * shape; {@link defaultIsRetryable} is the default predicate (overridable
+ * per-Agent or per-run); {@link RetryableProviderError} is exported for
+ * callers that want to recognize the synthetic error the loop raises for
+ * mid-stream provider failures.
+ */
+export {
+  defaultIsRetryable,
+  DEFAULT_RETRY_CONFIG,
+  RetryableProviderError,
+} from "./retry.js";
+
+export type { RetryConfig } from "./retry.js";

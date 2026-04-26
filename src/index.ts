@@ -113,6 +113,10 @@ export {
   setOpenRouterClient,
   OpenRouterClient,
   OpenRouterError,
+  StreamTruncatedError,
+  IdleTimeoutError,
+  defaultIsRetryable,
+  RetryableProviderError,
   DEFAULT_MODEL,
 } from "./openrouter/index.js";
 /**
@@ -142,6 +146,7 @@ export type {
   OpenRouterTool,
   CompletionsRequest,
   CompletionsResponse,
+  RetryConfig,
 } from "./openrouter/index.js";
 /**
  * Tool layer.
