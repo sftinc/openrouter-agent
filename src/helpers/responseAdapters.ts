@@ -19,7 +19,7 @@ export interface NodeResponseLike {
   writeHead(status: number, headers: Record<string, string>): unknown;
   write(chunk: string | Uint8Array): boolean;
   end(): void;
-  on(event: "close", listener: () => void): unknown;
+  on(event: "close" | "error", listener: (err?: Error) => void): unknown;
   readonly writableEnded: boolean;
 }
 
@@ -69,7 +69,8 @@ const NDJSON_DEFAULT_HEADERS: Record<string, string> = {
  * Stream an {@link AgentEvent} source to a Node `http.ServerResponse`-shaped
  * object as NDJSON. Sets default headers, writes one line per event, and
  * calls `res.end()` in a `finally`. If `options.abort` is provided, hooks
- * `res.on('close')` so a client disconnect aborts the run.
+ * `res.on('close')` and `res.on('error')` so a client disconnect or socket
+ * error aborts the run.
  *
  * @example
  * ```ts
@@ -99,6 +100,9 @@ export async function pipeEventsToNodeResponse(
   if (abort) {
     res.on("close", () => {
       if (!res.writableEnded && !abort.signal.aborted) abort.abort();
+    });
+    res.on("error", () => {
+      if (!abort.signal.aborted) abort.abort();
     });
   }
   try {

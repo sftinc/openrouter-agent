@@ -101,6 +101,39 @@ describe("pipeEventsToNodeResponse", () => {
   });
 });
 
+describe("pipeEventsToNodeResponse — Gap 1 (error listener)", () => {
+  test("aborts the run when the response emits an 'error' event", async () => {
+    const writes: string[] = [];
+    let closeListener: (() => void) | undefined;
+    let errorListener: ((err: Error) => void) | undefined;
+    const res = {
+      writeHead: () => {},
+      write: (chunk: string) => { writes.push(chunk); return true; },
+      end: () => {},
+      writableEnded: false,
+      on: (ev: string, listener: (...args: unknown[]) => void) => {
+        if (ev === "close") closeListener = listener as () => void;
+        if (ev === "error") errorListener = listener as (err: Error) => void;
+      },
+    };
+
+    void closeListener; // declared for symmetry; only errorListener is exercised
+
+    const ctrl = new AbortController();
+    const events = (async function* () {
+      yield { type: "agent:start", runId: "r1", agentName: "t", startedAt: 0 };
+      await new Promise((r) => setTimeout(r, 10));
+      if (ctrl.signal.aborted) return;
+      yield { type: "agent:end", runId: "r1", result: { text: "", messages: [], stopReason: "done", usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, generationIds: [] }, startedAt: 0, endedAt: 1, elapsedMs: 1 };
+    })();
+
+    const promise = pipeEventsToNodeResponse(events as never, res as never, { abort: ctrl });
+    setTimeout(() => errorListener?.(new Error("socket dead")), 5);
+    await promise;
+    expect(ctrl.signal.aborted).toBe(true);
+  });
+});
+
 describe("eventsToWebResponse", () => {
   test("returns a Response with default NDJSON headers and 200 status", async () => {
     const events: AgentEvent[] = [
