@@ -4,6 +4,7 @@ import { Agent } from '../../src/agent/Agent.js'
 import { Tool } from '../../src/tool/Tool.js'
 import { SessionBusyError } from '../../src/session/index.js'
 import type { CompletionChunk } from '../../src/openrouter/index.js'
+import { OpenRouterClient } from '../../src/openrouter/index.js'
 import { mockCompletionChunks, mockChunkStream } from '../fixtures/completions.js'
 
 /** Encode a chunk array as an SSE Response (what OpenRouterClient.completeStream parses). */
@@ -257,3 +258,84 @@ describe('Agent', () => {
 		}
 	})
 })
+
+describe("Agent — retry config plumbing", () => {
+  beforeEach(() => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+  });
+
+  afterEach(() => {
+    delete process.env.OPENROUTER_API_KEY;
+  });
+
+  test("forwards AgentConfig.retry into the run loop", async () => {
+    let observedConfig: unknown;
+    const stubClient = {
+      completeStream: (_req: unknown, opts: unknown) => {
+        observedConfig = opts;
+        return (async function* () {
+          yield {
+            id: "gen-1",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "m",
+            choices: [{ finish_reason: "stop", native_finish_reason: "stop", delta: { content: "ok" } }],
+          };
+          yield {
+            id: "gen-1",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "m",
+            choices: [],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          };
+        })();
+      },
+    } as unknown as OpenRouterClient;
+
+    const agent = new Agent({
+      name: "t",
+      description: "t",
+      retry: { maxAttempts: 7, initialDelayMs: 99 },
+    });
+    (agent as unknown as { openrouter: OpenRouterClient }).openrouter = stubClient;
+    await agent.run("hi");
+    expect(observedConfig).toMatchObject({
+      retryConfig: expect.objectContaining({ maxAttempts: 7, initialDelayMs: 99 }),
+    });
+  });
+
+  test("per-run retry merges over AgentConfig.retry", async () => {
+    let observedConfig: any;
+    const stubClient = {
+      completeStream: (_req: unknown, opts: unknown) => {
+        observedConfig = opts;
+        return (async function* () {
+          yield {
+            id: "gen-1",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "m",
+            choices: [{ finish_reason: "stop", native_finish_reason: "stop", delta: { content: "ok" } }],
+          };
+          yield {
+            id: "gen-1", object: "chat.completion.chunk", created: 1, model: "m", choices: [],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          };
+        })();
+      },
+    } as unknown as OpenRouterClient;
+
+    const agent = new Agent({
+      name: "t",
+      description: "t",
+      retry: { maxAttempts: 7, initialDelayMs: 99 },
+    });
+    (agent as unknown as { openrouter: OpenRouterClient }).openrouter = stubClient;
+    await agent.run("hi", { retry: { maxAttempts: 1 } });
+    expect(observedConfig.retryConfig).toMatchObject({
+      maxAttempts: 1,
+      initialDelayMs: 99,
+    });
+  });
+});

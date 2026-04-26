@@ -15,6 +15,7 @@ import { z } from "zod";
 import type { Message, Result } from "../types/index.js";
 import type { LLMConfig } from "../openrouter/index.js";
 import { OpenRouterClient, getOpenRouterClient } from "../openrouter/index.js";
+import type { RetryConfig } from "../openrouter/retry.js";
 import { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
@@ -87,6 +88,15 @@ export interface AgentConfig<Input> {
    * `display` payloads to lifecycle events. See {@link AgentDisplayHooks}.
    */
   display?: AgentDisplayHooks;
+  /**
+   * Optional retry policy for transient LLM-call failures. Applied to every
+   * run started by this Agent; per-run overrides via
+   * {@link AgentRunOptions.retry} merge field-by-field on top.
+   *
+   * Default: `{ maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 8000, idleTimeoutMs: 60_000 }`.
+   * Set `maxAttempts: 1` to disable retries.
+   */
+  retry?: RetryConfig;
 }
 
 /**
@@ -150,6 +160,8 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
   private readonly openrouter: OpenRouterClient;
   /** Optional display hooks attached to lifecycle events. */
   private readonly agentDisplay?: AgentConfig<Input>["display"];
+  /** Stored retry config; merged per-run with `RunLoopOptions.retry`. */
+  private readonly retryConfig?: RetryConfig;
   /**
    * Set of session ids currently running on this Agent instance. Used to
    * enforce single-flight per session and surface {@link SessionBusyError}.
@@ -210,6 +222,7 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
     this.sessionStore = config.sessionStore ?? new InMemorySessionStore();
     this.openrouter = getOpenRouterClient() ?? new OpenRouterClient({});
     this.agentDisplay = config.display;
+    this.retryConfig = config.retry;
   }
 
   /**
@@ -309,6 +322,7 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
       openrouter: this.openrouter,
       parentRunId,
       display: this.agentDisplay,
+      retry: this.retryConfig,
     };
   }
 }
