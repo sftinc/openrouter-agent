@@ -1,33 +1,33 @@
 {
-  "name": "@sftinc/openrouter-agent",
-  "version": "0.0.0",
-  "description": "Agent loop wrapper for OpenRouter",
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
-  "scripts": {
-    "build": "tsc",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "demo:quickstart": "tsx --env-file=.env examples/quickstart/server.ts",
-    "demo:chat-stream-events": "tsx --watch --env-file=.env examples/chat-stream-events/server.ts",
-    "demo:sub-agent": "tsx --env-file=.env examples/sub-agent/server.ts",
-    "websearch": "tsx --env-file=.env examples/websearch.ts"
-  },
-  "dependencies": {
-    "zod": "^4.3.6"
-  },
-  "devDependencies": {
-    "@types/node": "^24.12.2",
-    "tsx": "^4.7.0",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.5"
-  },
-  "engines": {
-    "node": ">=20"
-  }
+	"name": "@sftinc/openrouter-agent",
+	"version": "0.0.0",
+	"description": "Agent loop wrapper for OpenRouter",
+	"type": "module",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"typecheck": "tsc --noEmit",
+		"demo:quickstart": "tsx --env-file=.env examples/quickstart/server.ts",
+		"demo:full-demo": "tsx --watch --env-file=.env examples/full-demo/server.ts",
+		"demo:sub-agent": "tsx --env-file=.env examples/sub-agent/server.ts",
+		"websearch": "tsx --env-file=.env examples/websearch.ts"
+	},
+	"dependencies": {
+		"zod": "^4.3.6"
+	},
+	"devDependencies": {
+		"@types/node": "^24.12.2",
+		"tsx": "^4.7.0",
+		"typescript": "^6.0.3",
+		"vitest": "^4.1.5"
+	},
+	"engines": {
+		"node": ">=20"
+	}
 }
