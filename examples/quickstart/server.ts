@@ -2,10 +2,9 @@ import { z } from 'zod'
 import { setOpenRouterClient, Tool, Agent } from '../../src/index.js'
 
 setOpenRouterClient({
-	model: 'inception/mercury-2',
-	max_tokens: 2000,
+	max_tokens: 1000,
 	temperature: 0.3,
-	reasoning: { effort: 'medium' },
+	reasoning: { effort: 'none' },
 	title: 'openrouter-agent: quickstart',
 })
 
@@ -28,4 +27,4 @@ const result = await agent.run('What is 347 * 29?')
 console.log('[text]', result.text) // assistant's final text
 console.log('\n[stopReason]', result.stopReason) // "done" | "max_turns" | "length" | "content_filter" | "error" | "aborted"
 console.log('\n[result]')
-console.dir(result, { depth: null }) // the full result object, including tool calls and intermediate reasoning
+console.dir(result, { depth: null })

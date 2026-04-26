@@ -1,8 +1,7 @@
 import { setOpenRouterClient, Agent } from '../../src/index.js'
 
 setOpenRouterClient({
-	// Using default model
-	max_tokens: 2000,
+	max_tokens: 1000,
 	temperature: 0.3,
 	reasoning: { effort: 'none' },
 	title: 'openrouter-agent: sub-agent',
@@ -24,8 +23,8 @@ const orchestrator = new Agent({
 	tools: [haikuWriter],
 })
 
-const result = await orchestrator.run('Write me a haiku about the ocean.')
+const result1 = await orchestrator.run('Write me a haiku about the ocean.')
 
-console.log('[final text]', result.text)
-console.log('\n[result]')
-console.dir(result, { depth: null }) // the full result object, including tool calls and intermediate reasoning
+console.log('[1 text]', result1.text)
+console.log('\n[1 result]')
+console.dir(result1, { depth: null })
