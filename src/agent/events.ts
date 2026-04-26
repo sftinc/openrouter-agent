@@ -72,6 +72,17 @@ export interface AgentDisplayHooks {
    * when their dedicated hooks aren't supplied.
    */
   end?: (result: Result) => Partial<EventDisplay>;
+  /**
+   * Called when emitting a `retry` event. Receives the same data attached to
+   * the event. Use to render UI like `"Retrying… (attempt 2/3)"`. If omitted,
+   * the loop falls back to {@link defaultDisplay}.
+   */
+  retry?: (info: {
+    turn: number;
+    attempt: number;
+    delayMs: number;
+    error: { code?: number; message: string };
+  }) => Partial<EventDisplay>;
 }
 
 /**
@@ -79,7 +90,7 @@ export interface AgentDisplayHooks {
  * `Agent.run()` and display hooks. Discriminate on `event.type`.
  *
  * **Lifecycle order** (per run):
- *   `agent:start` → (`message:delta*` + `message` | `tool:start` + `tool:progress*` + `tool:end`)* → (`error`)? → `agent:end`
+ *   `agent:start` → ((`retry*` | `message:delta*` + `message`) | `tool:start` + `tool:progress*` + `tool:end`)* → (`error`)? → `agent:end`
  *
  * **Events:**
  * - `agent:start` — fires once, immediately after the runId is assigned,
@@ -97,6 +108,10 @@ export interface AgentDisplayHooks {
  *   `deps.emit`. The loop itself never emits this.
  * - `tool:end` — fires once per tool invocation. Discriminate success vs
  *   failure via `"error" in event`.
+ * - `retry` — fires zero or more times per turn. Only fires before the first
+ *   `message:delta` for a turn (the retry window closes once any content has
+ *   been emitted). Carries the failed `attempt`, the computed `delayMs`, and
+ *   the error envelope.
  * - `error` — fires once at most per run, just before a terminal
  *   `stopReason: "error"`.
  * - `agent:end` — fires once, last, with the final `Result`.
@@ -226,6 +241,26 @@ export type AgentEvent =
       elapsedMs: number;
     }
   | {
+      /** Discriminator: a retryable LLM-call failure that the loop is about to retry. */
+      type: "retry";
+      /** Run id this retry belongs to. */
+      runId: string;
+      /** Zero-based turn index within the run. */
+      turn: number;
+      /** One-based; the attempt that just failed. The next attempt will be `attempt + 1`. */
+      attempt: number;
+      /** Computed backoff delay until the next attempt, in milliseconds. */
+      delayMs: number;
+      /**
+       * The failure being retried. `code` is the HTTP status when the
+       * underlying error was an `OpenRouterError`; absent for transport-level
+       * errors. `metadata` carries provider extras when available.
+       */
+      error: { code?: number; message: string; metadata?: Record<string, unknown> };
+      /** Resolved display payload from `AgentDisplayHooks.retry`, if configured. */
+      display?: EventDisplay;
+    }
+  | {
       /** Discriminator: a run-fatal error. Always immediately precedes an `agent:end` with `stopReason: "error"`. */
       type: "error";
       /** Run id this error belongs to. */
@@ -285,6 +320,10 @@ export function defaultDisplay(event: AgentEvent): EventDisplay {
       return {
         title: "error" in event ? `Tool failed after ${seconds}s` : `Completed tool in ${seconds}s`,
       };
+    }
+    case "retry": {
+      const seconds = Math.max(1, Math.round(event.delayMs / 1000));
+      return { title: `Retrying in ${seconds}s (attempt ${event.attempt + 1})` };
     }
     case "error":
       return { title: "Error", content: event.error.message };

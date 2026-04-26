@@ -33,6 +33,13 @@ export interface AgentEventHandlers {
   /** Called once when a tool invocation ends (success or failure). */
   onToolEnd?: (e: Extract<AgentEvent, { type: "tool:end" }>) => void | Promise<void>;
   /**
+   * Called each time the loop retries a failed LLM call. Fires before the
+   * next attempt begins, after the computed backoff delay. Only fires before
+   * the first `message:delta` for a turn (the retry window closes once any
+   * content has been emitted).
+   */
+  onRetry?: (e: Extract<AgentEvent, { type: "retry" }>) => void | Promise<void>;
+  /**
    * Called when a fatal run error occurs. Always precedes an `agent:end`
    * with `stopReason: "error"`. Emitted at most once per run.
    */
@@ -91,6 +98,9 @@ export async function consumeAgentEvents(
         break;
       case "tool:end":
         if (handlers.onToolEnd) await handlers.onToolEnd(event);
+        break;
+      case "retry":
+        if (handlers.onRetry) await handlers.onRetry(event);
         break;
       case "error":
         if (handlers.onError) await handlers.onError(event);

@@ -92,3 +92,18 @@ describe("defaultDisplay", () => {
     expect(defaultDisplay(ev).content).toBe("rate limited");
   });
 });
+
+describe("defaultDisplay — retry variant", () => {
+  test("renders attempt and delay", () => {
+    const display = defaultDisplay({
+      type: "retry",
+      runId: "run-1",
+      turn: 0,
+      attempt: 2,
+      delayMs: 1500,
+      error: { message: "ECONNRESET" },
+    });
+    expect(display.title).toMatch(/Retrying/);
+    expect(display.title).toMatch(/2/);
+  });
+});
