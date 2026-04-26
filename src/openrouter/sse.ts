@@ -1,3 +1,5 @@
+import { StreamTruncatedError } from "./errors.js";
+
 /**
  * @file Minimal Server-Sent Events (SSE) parser for OpenRouter streaming
  * responses.
@@ -21,7 +23,8 @@
  *   - the OpenAI/OpenRouter `[DONE]` sentinel (ends the iteration)
  *   - chunks that split mid-frame (buffered until a frame terminator arrives)
  *   - a trailing frame with no terminator if the server closes the stream
- *     without a blank line
+ *     without a blank line; a stream that ends without the `[DONE]` sentinel
+ *     throws `StreamTruncatedError` after yielding any trailing data
  *
  * Non-`data` fields (`event:`, `id:`, `retry:`) are ignored — we only need
  * `data`. Payloads that fail `JSON.parse` throw and abort the stream
@@ -79,12 +82,20 @@ export async function* parseSseStream(
         /**
          * Server closed the stream. If anything remains in `buffer` it is a
          * trailing frame the server never terminated with a blank line —
-         * extract and yield it (unless it is `[DONE]`).
+         * extract and yield it (unless it is `[DONE]`). Then throw
+         * `StreamTruncatedError`: a stream that ended without the `[DONE]`
+         * sentinel is truncated. The OpenRouter client (or the agent loop)
+         * decides whether to surface this based on whether a terminal
+         * `finish_reason` was already observed in the chunks.
          */
         const payload = extractData(buffer);
         buffer = "";
-        if (payload !== null && payload !== "[DONE]") yield JSON.parse(payload);
-        return;
+        if (payload === "[DONE]") return;
+        if (payload !== null) yield JSON.parse(payload);
+        throw new StreamTruncatedError({
+          message: "SSE stream ended without [DONE] sentinel",
+          partialContentLength: 0,
+        });
       }
     }
   } finally {

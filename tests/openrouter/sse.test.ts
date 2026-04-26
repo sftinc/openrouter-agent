@@ -58,9 +58,29 @@ describe("parseSseStream", () => {
     expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
   });
 
-  test("ends cleanly if stream closes without [DONE]", async () => {
+  test("throws StreamTruncatedError if stream closes without [DONE]", async () => {
+    const { StreamTruncatedError } = await import("../../src/openrouter/errors.js");
     const stream = bytes(`data: {"a":1}\n\n`);
-    expect(await collect(parseSseStream(stream))).toEqual([{ a: 1 }]);
+    await expect(collect(parseSseStream(stream))).rejects.toBeInstanceOf(StreamTruncatedError);
+  });
+
+  test("yields trailing partial frame before throwing on premature close", async () => {
+    const { StreamTruncatedError } = await import("../../src/openrouter/errors.js");
+    const stream = bytes(`data: {"a":1}\n\ndata: {"b":2}`);
+    const yielded: unknown[] = [];
+    const iter = parseSseStream(stream)[Symbol.asyncIterator]();
+    let caught: unknown;
+    try {
+      while (true) {
+        const r = await iter.next();
+        if (r.done) break;
+        yielded.push(r.value);
+      }
+    } catch (err) {
+      caught = err;
+    }
+    expect(yielded).toEqual([{ a: 1 }, { b: 2 }]);
+    expect(caught).toBeInstanceOf(StreamTruncatedError);
   });
 
   test("ignores non-data fields like event:/id:/retry:", async () => {
