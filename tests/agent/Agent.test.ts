@@ -6,7 +6,6 @@ import { SessionBusyError } from '../../src/session/index.js'
 import { OpenRouterClient } from '../../src/openrouter/index.js'
 import {
 	mockCompletionChunks,
-	mockChunkStream,
 	sseOfChunks,
 	mockOkSse,
 } from '../fixtures/completions.js'
