@@ -240,6 +240,113 @@ describe('Agent', () => {
 			/* drain */
 		}
 	})
+
+	test('subagent message events do NOT bubble to parent stream', async () => {
+		fetchSpy
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-1',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'hi' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			.mockResolvedValueOnce(mockOkSse('child-says-this', 'gen-2'))
+			.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
+
+		const child = new Agent({ name: 'child', description: 'sub' })
+		const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+		let childRunId: string | undefined
+		const messageRunIds: string[] = []
+
+		for await (const ev of parent.run('go')) {
+			if (ev.type === 'agent:start' && ev.parentRunId) {
+				childRunId = ev.runId
+			}
+			if (ev.type === 'message' || ev.type === 'message:delta') {
+				messageRunIds.push(ev.runId)
+			}
+		}
+
+		expect(childRunId).toBeTypeOf('string')
+		expect(messageRunIds.includes(childRunId!)).toBe(false)
+		expect(messageRunIds.length).toBeGreaterThan(0)
+	})
+
+	test('subagent non-message events still bubble to parent stream', async () => {
+		const innerTool = new Tool({
+			name: 'inner_tool',
+			description: 'a tool the child uses',
+			inputSchema: z.object({ x: z.string() }),
+			execute: async ({ x }) => `inner-result-${x}`,
+		})
+
+		fetchSpy
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-1',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'go' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-2',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 't1',
+								type: 'function',
+								function: { name: 'inner_tool', arguments: JSON.stringify({ x: 'foo' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			.mockResolvedValueOnce(mockOkSse('child-summary', 'gen-3'))
+			.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-4'))
+
+		const child = new Agent({ name: 'child', description: 'sub', tools: [innerTool] })
+		const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+		let childRunId: string | undefined
+		const observedTypesByRunId = new Map<string, string[]>()
+
+		for await (const ev of parent.run('go')) {
+			if (ev.type === 'agent:start' && ev.parentRunId) childRunId = ev.runId
+			const arr = observedTypesByRunId.get(ev.runId) ?? []
+			arr.push(ev.type)
+			observedTypesByRunId.set(ev.runId, arr)
+		}
+
+		const childEvents = observedTypesByRunId.get(childRunId!) ?? []
+		expect(childEvents).toContain('agent:start')
+		expect(childEvents).toContain('agent:end')
+		expect(childEvents).toContain('tool:start')
+		expect(childEvents).toContain('tool:end')
+		expect(childEvents).not.toContain('message')
+		expect(childEvents).not.toContain('message:delta')
+	})
 })
 
 describe("Agent — retry config plumbing", () => {

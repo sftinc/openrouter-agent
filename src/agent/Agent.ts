@@ -198,7 +198,14 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
             inputStr,
             { signal: deps.signal, parentRunId: deps.runId },
             (ev) => {
-              parentEmit?.(ev);
+              // Subagents are tools from the parent's perspective. Their internal
+              // message events are model-shaped reasoning artifacts addressed to
+              // the parent loop, not the end user, and should not pollute the
+              // parent's NDJSON stream. Keep them on the inner AgentRun (via
+              // emit) for inspector/devtools access.
+              if (ev.type !== "message" && ev.type !== "message:delta") {
+                parentEmit?.(ev);
+              }
               emit(ev);
             }
           );
