@@ -176,6 +176,11 @@ async function runRequest(message) {
   let assistantBuf = "";
   let renderedAssistant = false;
   let errorShown = false;
+  // The runId of the orchestrator (top-level) run. Captured from the first
+  // `agent:start` whose `parentRunId` is unset. Subagent message events
+  // bubble up the same stream but address the orchestrator (their parent),
+  // not the end user — render only the top-level run's message bubbles.
+  let topLevelRunId = null;
 
   const showError = (msg) => {
     if (errorShown) return;
@@ -235,6 +240,13 @@ async function runRequest(message) {
     if (event.type !== "message:delta") {
       console.log("[agent]", event.type, event);
     }
+    // Capture the orchestrator's runId on the very first agent:start so
+    // we can distinguish its messages (= user-facing answers) from
+    // subagent messages (= internal reasoning that should not become
+    // chat bubbles).
+    if (event.type === "agent:start" && !event.parentRunId && !topLevelRunId) {
+      topLevelRunId = event.runId;
+    }
     switch (event.type) {
       case "agent:start": {
         // Open the per-turn activity card up front so the user sees an
@@ -284,6 +296,10 @@ async function runRequest(message) {
         break;
       }
       case "message:delta": {
+        // Skip subagent token streams — their text is internal reasoning,
+        // not a user-facing answer. They're still in the event stream for
+        // observability.
+        if (event.runId !== topLevelRunId) break;
         if (typeof event.text !== "string" || event.text.length === 0) break;
         if (!assistantEl) {
           assistantEl = addAssistantMessage();
@@ -296,6 +312,13 @@ async function runRequest(message) {
         break;
       }
       case "message": {
+        // Skip subagent assistant messages for the same reason as the
+        // delta path — they address the orchestrator, not the user.
+        if (event.runId !== topLevelRunId) {
+          assistantEl = null;
+          assistantBuf = "";
+          break;
+        }
         // The full assistant message. If we rendered deltas, the bubble is
         // already up-to-date — just reset state for the next turn. If for
         // some reason no deltas arrived (e.g. non-streaming fallback), render
