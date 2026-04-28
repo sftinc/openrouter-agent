@@ -228,6 +228,16 @@ async function runRequest(message) {
   }
 
   function handleEvent(event) {
+    // Log every event to the browser console. Pass the object (not a string)
+    // so DevTools renders it expandable — handy for inspecting toolName,
+    // toolUseId, output, metadata, runId, parentRunId, timing fields, etc.
+    // message:delta fires per token so it goes through console.debug
+    // (default-hidden at the "Info" log level) to avoid drowning the console.
+    if (event.type === "message:delta") {
+      console.debug("[agent]", event.type, event);
+    } else {
+      console.log("[agent]", event.type, event);
+    }
     switch (event.type) {
       case "agent:start": {
         // Open the per-turn activity card up front so the user sees an
