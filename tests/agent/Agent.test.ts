@@ -663,3 +663,137 @@ describe("Agent — retry config plumbing", () => {
     });
   });
 });
+
+describe('Agent — asTool.metadata', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch')
+    process.env.OPENROUTER_API_KEY = 'sk-test'
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  test('asTool.metadata is attached to outer tool:end.metadata', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        sseOfChunks(
+          mockCompletionChunks({
+            id: 'gen-1',
+            finish_reason: 'tool_calls',
+            tool_calls: [
+              {
+                id: 'c1',
+                type: 'function',
+                function: { name: 'child', arguments: JSON.stringify({ input: 'topic' }) },
+              },
+            ],
+            usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9 },
+          })
+        )
+      )
+      .mockResolvedValueOnce(
+        sseOfChunks(
+          mockCompletionChunks({
+            id: 'gen-2',
+            content: 'child-output',
+            usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+          })
+        )
+      )
+      .mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
+
+    const child = new Agent({
+      name: 'child',
+      description: 'sub',
+      asTool: {
+        metadata: (result, input) => ({
+          topic: (input as { input: string }).input,
+          tokens: result.usage.total_tokens,
+          stopReason: result.stopReason,
+        }),
+      },
+    })
+    const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+    let toolEnd: { metadata?: Record<string, unknown> } | undefined
+    for await (const ev of parent.run('go')) {
+      if (ev.type === 'tool:end' && ev.toolName === 'child') {
+        toolEnd = ev as never
+      }
+    }
+
+    expect(toolEnd?.metadata).toBeTypeOf('object')
+    expect(toolEnd?.metadata?.topic).toBe('topic')
+    expect(toolEnd?.metadata?.tokens).toBe(10)
+    expect(toolEnd?.metadata?.stopReason).toBe('done')
+  })
+
+  test('asTool.metadata is silently ignored on top-level run', async () => {
+    fetchSpy.mockResolvedValueOnce(mockOkSse('hi', 'gen-1'))
+
+    const spy = vi.fn(() => ({ should: 'not be invoked' }))
+    const agent = new Agent({
+      name: 'a',
+      description: 'd',
+      asTool: { metadata: spy },
+    })
+
+    const result = await agent.run('hello')
+    expect(result.stopReason).toBe('done')
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('asTool.metadata receives Result on error stop reason', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        sseOfChunks(
+          mockCompletionChunks({
+            id: 'gen-1',
+            finish_reason: 'tool_calls',
+            tool_calls: [
+              {
+                id: 'c1',
+                type: 'function',
+                function: { name: 'child', arguments: JSON.stringify({ input: 'x' }) },
+              },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          })
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: 400, message: 'bad request' } }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
+
+    const child = new Agent({
+      name: 'child',
+      description: 'sub',
+      asTool: {
+        metadata: (result) => ({
+          stopReason: result.stopReason,
+          sawError: result.error !== undefined,
+        }),
+      },
+      retry: { maxAttempts: 1 },
+    })
+    const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+    let toolEnd: { error?: string; metadata?: Record<string, unknown> } | undefined
+    for await (const ev of parent.run('go')) {
+      if (ev.type === 'tool:end' && ev.toolName === 'child') {
+        toolEnd = ev as never
+      }
+    }
+
+    expect(toolEnd?.error).toBeTypeOf('string')
+    expect(toolEnd?.metadata?.stopReason).toBe('error')
+    expect(toolEnd?.metadata?.sawError).toBe(true)
+  })
+});

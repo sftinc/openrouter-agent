@@ -90,6 +90,54 @@ export interface AgentConfig<Input> {
    */
   display?: AgentDisplayHooks;
   /**
+   * Customizations that apply only when this agent is invoked as a tool by
+   * a parent agent (i.e. as a subagent). Each entry inside is independently
+   * optional. When the agent runs at top level (`agent.run(...)` without a
+   * parent loop dispatching it), every entry here is silently ignored.
+   *
+   * @example
+   * ```ts
+   * import { Agent } from "./agent";
+   *
+   * new Agent({
+   *   name: "researcher",
+   *   description: "multi-step research",
+   *   asTool: {
+   *     metadata: (result, input) => ({
+   *       topic: input.input,
+   *       tokens: result.usage.total_tokens,
+   *       stopReason: result.stopReason,
+   *     }),
+   *   },
+   * });
+   * ```
+   */
+  asTool?: {
+    /**
+     * Compute structured metadata to attach to the outer `tool:end.metadata`
+     * field when this agent finishes a subagent invocation. Called once,
+     * synchronously, after the inner run resolves but before the wrapper's
+     * ToolResult is returned to the parent's loop. Receives the inner
+     * {@link Result} (`text`, `usage`, `stopReason`, `messages`) and the
+     * validated input args the parent passed.
+     *
+     * Returning `undefined` is equivalent to not setting the hook — no
+     * `metadata` field is attached. The model never sees this value; it's
+     * a side-channel for the parent's UI / telemetry / billing only. Despite
+     * the name "metadata", this field is not limited to auxiliary info — put
+     * primary client-facing structured data here (sources, citations,
+     * billing fields, debug traces) if useful.
+     *
+     * @param result The inner run's {@link Result}, including `stopReason`
+     *   (which may be `"error"` if the subagent failed gracefully).
+     * @param input The validated input args the parent passed, shaped by
+     *   {@link AgentConfig.inputSchema} (defaults to `{ input: string }`).
+     * @returns A JSON-serializable record to attach as `tool:end.metadata`,
+     *   or `undefined` to attach nothing.
+     */
+    metadata?: (result: Result, input: Input) => Record<string, unknown> | undefined;
+  };
+  /**
    * Optional retry policy for transient LLM-call failures. Applied to every
    * run started by this Agent; per-run overrides via
    * {@link AgentRunOptions.retry} merge field-by-field on top.
@@ -288,10 +336,11 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
         try {
           const result = await handle.result;
           lastResult = result; // captured for synthesized display hooks
+          const metadata = config.asTool?.metadata?.(result, args);
           if (result.stopReason === "error") {
-            return { error: result.error?.message ?? "subagent errored" };
+            return { error: result.error?.message ?? "subagent errored", metadata };
           }
-          return { content: result.text };
+          return { content: result.text, metadata };
         } catch (err) {
           lastResult = null;
           return { error: err instanceof Error ? err.message : String(err) };
