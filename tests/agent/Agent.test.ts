@@ -282,6 +282,63 @@ describe('Agent', () => {
 		expect(messageRunIds.length).toBeGreaterThan(0)
 	})
 
+	test('subagent display hooks attach to outer tool:start and tool:end', async () => {
+		fetchSpy
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-1',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'topic' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			.mockResolvedValueOnce(mockOkSse('child-output', 'gen-2'))
+			.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
+
+		const child = new Agent({
+			name: 'child',
+			description: 'sub',
+			display: {
+				title: 'Child Title',
+				start: (input) => ({
+					title: 'Child Starting',
+					content: typeof input === 'string' ? input : JSON.stringify(input),
+				}),
+				success: (result) => ({
+					title: 'Child Done',
+					content: `text=${result.text}`,
+				}),
+			},
+		})
+		const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+		let outerToolStart: { display?: { title: string; content?: unknown } } | undefined
+		let outerToolEnd: { display?: { title: string; content?: unknown } } | undefined
+
+		for await (const ev of parent.run('go')) {
+			if (ev.type === 'tool:start' && ev.toolName === 'child') {
+				outerToolStart = ev as never
+			}
+			if (ev.type === 'tool:end' && ev.toolName === 'child') {
+				outerToolEnd = ev as never
+			}
+		}
+
+		expect(outerToolStart?.display?.title).toBe('Child Starting')
+		expect(outerToolStart?.display?.content).toBe('topic')
+
+		expect(outerToolEnd?.display?.title).toBe('Child Done')
+		expect(outerToolEnd?.display?.content).toBe('text=child-output')
+	})
+
 	test('subagent non-message events still bubble to parent stream', async () => {
 		const innerTool = new Tool({
 			name: 'inner_tool',

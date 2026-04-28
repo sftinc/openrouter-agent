@@ -17,6 +17,7 @@ import type { LLMConfig } from "../openrouter/index.js";
 import { OpenRouterClient, getOpenRouterClient } from "../openrouter/index.js";
 import type { RetryConfig } from "../openrouter/retry.js";
 import { Tool } from "../tool/Tool.js";
+import type { ToolDisplayHooks } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
 import { InMemorySessionStore, SessionBusyError } from "../session/index.js";
@@ -130,6 +131,23 @@ export type AgentRunOptions = Omit<RunLoopOptions, "parentRunId"> & {
 const DEFAULT_INPUT_SCHEMA = z.object({ input: z.string() });
 
 /**
+ * Reshape a Tool's `args` into the input shape the AgentDisplayHooks
+ * expect (`string | Message[]`). When the Agent uses the default
+ * `{ input: string }` schema, return the inner string; otherwise pass
+ * the args through as a JSON-serializable proxy. This keeps the
+ * synthesis lossy-but-useful: hooks that destructure `{ input }` work
+ * cleanly; hooks that just use the input as a label string get a
+ * sensible fallback.
+ */
+function inputArgsToAgentInput(args: unknown): string | Message[] {
+  if (args && typeof args === "object" && "input" in args) {
+    const v = (args as { input: unknown }).input;
+    if (typeof v === "string") return v;
+  }
+  return typeof args === "string" ? args : JSON.stringify(args);
+}
+
+/**
  * The core agent. Extends `Tool` so an Agent can be passed wherever a tool
  * is expected — this is how subagents work. `run()` returns an `AgentRun`
  * handle which is both awaitable (for the final `Result`) and async-iterable
@@ -182,10 +200,54 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
     const inputSchema =
       config.inputSchema ?? (DEFAULT_INPUT_SCHEMA as unknown as z.ZodType<Input>);
 
+    // Captured per-invocation by `execute`; read by the synthesized display
+    // hooks (success/error) when the parent's loop emits tool:end. The two
+    // callsites are synchronous within executeToolCall, so a single shared
+    // closure variable is safe under per-invocation usage.
+    let lastResult: Result | null = null;
+
+    const agentDisplay = config.display;
+
+    const synthesizedToolDisplay: ToolDisplayHooks<Input> | undefined = agentDisplay
+      ? {
+          title:
+            agentDisplay.title === undefined
+              ? undefined
+              : typeof agentDisplay.title === "string"
+                ? agentDisplay.title
+                : (args) => {
+                    const input = inputArgsToAgentInput(args);
+                    return (agentDisplay.title as (i: string | Message[]) => string)(input);
+                  },
+          start: agentDisplay.start
+            ? (args) => agentDisplay.start!(inputArgsToAgentInput(args))
+            : undefined,
+          success:
+            agentDisplay.success || agentDisplay.end
+              ? () => {
+                  const result = lastResult;
+                  if (!result) return {};
+                  const hook = agentDisplay.success ?? agentDisplay.end;
+                  return hook!(result);
+                }
+              : undefined,
+          error:
+            agentDisplay.error || agentDisplay.end
+              ? () => {
+                  const result = lastResult;
+                  if (!result) return {};
+                  const hook = agentDisplay.error ?? agentDisplay.end;
+                  return hook!(result);
+                }
+              : undefined,
+        }
+      : undefined;
+
     super({
       name: config.name,
       description: config.description,
       inputSchema,
+      display: synthesizedToolDisplay,
       execute: async (args: Input, deps: ToolDeps): Promise<string | ToolResult> => {
         const inputStr =
           args && typeof args === "object" && "input" in args
@@ -214,11 +276,13 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
         });
         try {
           const result = await handle.result;
+          lastResult = result; // captured for synthesized display hooks
           if (result.stopReason === "error") {
             return { error: result.error?.message ?? "subagent errored" };
           }
           return { content: result.text };
         } catch (err) {
+          lastResult = null;
           return { error: err instanceof Error ? err.message : String(err) };
         }
       },
