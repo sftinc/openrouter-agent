@@ -228,14 +228,11 @@ async function runRequest(message) {
   }
 
   function handleEvent(event) {
-    // Log every event to the browser console. Pass the object (not a string)
-    // so DevTools renders it expandable — handy for inspecting toolName,
-    // toolUseId, output, metadata, runId, parentRunId, timing fields, etc.
-    // message:delta fires per token so it goes through console.debug
-    // (default-hidden at the "Info" log level) to avoid drowning the console.
-    if (event.type === "message:delta") {
-      console.debug("[agent]", event.type, event);
-    } else {
+    // Log every event to the browser console (object form, so DevTools
+    // renders it expandable). message:delta is skipped — its text is
+    // assembled into the `message` event that follows, so logging deltas
+    // is just per-token noise.
+    if (event.type !== "message:delta") {
       console.log("[agent]", event.type, event);
     }
     switch (event.type) {
