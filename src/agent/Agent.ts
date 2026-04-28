@@ -171,8 +171,10 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
   /**
    * Construct an agent. Also wires up the underlying `Tool` superclass so
    * that invoking this agent as a tool from a parent runs a nested
-   * {@link runLoop}, forwarding all child events into the parent's stream
-   * via `deps.emit`.
+   * {@link runLoop}, forwarding child events into the parent's stream via
+   * `deps.emit` — except `message` and `message:delta`, which remain on
+   * the inner `AgentRun` only so subagent reasoning artifacts don't
+   * pollute the parent's chat-bubble path.
    *
    * @param config The agent configuration. See {@link AgentConfig}.
    */
