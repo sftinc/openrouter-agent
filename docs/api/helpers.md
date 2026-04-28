@@ -68,8 +68,8 @@ function defaultDisplay(event: AgentEvent): EventDisplay;
 | `message` | `"Message"` | — |
 | `tool:start` | `` `Running ${event.toolName}` `` | — |
 | `tool:progress` | `` `Still running (${Math.round(event.elapsedMs / 1000)}s)` `` | — |
-| `tool:end` (success) | `` `Completed tool in ${seconds}s` `` (min 1s) | — |
-| `tool:end` (error) | `` `Tool failed after ${seconds}s` `` | — |
+| `tool:end` (success) | `` `Completed ${event.toolName} in ${seconds}s` `` (min 1s) | — |
+| `tool:end` (error) | `` `${event.toolName} failed after ${seconds}s` `` | — |
 | `error` | `"Error"` | `event.error.message` |
 
 **Errors** — none.

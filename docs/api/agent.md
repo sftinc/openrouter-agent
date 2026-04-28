@@ -264,13 +264,14 @@ Source: `src/agent/events.ts:174-187`. **Optional.** Only fires when a tool emit
 
 ### `tool:end` (success)
 
-Source: `src/agent/events.ts:188-207`. Discriminate success vs failure with `"error" in event`.
+Source: `src/agent/events.ts:208-229`. Discriminate success vs failure with `"error" in event`.
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `type` | `"tool:end"` | Discriminator. |
 | `runId` | `string` | Run id this tool call belongs to. |
 | `toolUseId` | `string` | Identifier matching the originating `tool:start`. |
+| `toolName` | `string` | Name of the tool as registered on the agent. Mirrors the value on the originating `tool:start` so `tool:end` is self-describing without a `toolUseId` lookup. |
 | `output` | `unknown` | Tool result content (the same value passed back to the model in the `tool` role message). |
 | `metadata` | `Record<string, unknown> \| undefined` | Optional structured metadata returned by the tool, surfaced for telemetry/UI. |
 | `display` | `EventDisplay \| undefined` | Resolved display payload from the tool's `success` hook, if any. |
@@ -280,13 +281,14 @@ Source: `src/agent/events.ts:188-207`. Discriminate success vs failure with `"er
 
 ### `tool:end` (error)
 
-Source: `src/agent/events.ts:208-227`. Distinguished from the success variant by the presence of `error` (and the absence of `output`).
+Source: `src/agent/events.ts:230-251`. Distinguished from the success variant by the presence of `error` (and the absence of `output`).
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `type` | `"tool:end"` | Discriminator. |
 | `runId` | `string` | Run id this tool call belongs to. |
 | `toolUseId` | `string` | Identifier matching the originating `tool:start`. |
+| `toolName` | `string` | Name of the tool as registered on the agent. For unregistered-tool errors this is the name the model attempted to call. |
 | `error` | `string` | Human-readable error message; this same string is sent back to the model as the tool result. |
 | `metadata` | `Record<string, unknown> \| undefined` | Optional structured metadata captured alongside the error. |
 | `display` | `EventDisplay \| undefined` | Resolved display payload from the tool's `error` hook, if any. |
