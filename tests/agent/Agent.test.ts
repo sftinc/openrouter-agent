@@ -3,30 +3,13 @@ import { z } from 'zod'
 import { Agent } from '../../src/agent/Agent.js'
 import { Tool } from '../../src/tool/Tool.js'
 import { SessionBusyError } from '../../src/session/index.js'
-import type { CompletionChunk } from '../../src/openrouter/index.js'
 import { OpenRouterClient } from '../../src/openrouter/index.js'
-import { mockCompletionChunks, mockChunkStream } from '../fixtures/completions.js'
-
-/** Encode a chunk array as an SSE Response (what OpenRouterClient.completeStream parses). */
-function sseOfChunks(chunks: CompletionChunk[]): Response {
-	const body =
-		chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') +
-		`data: [DONE]\n\n`
-	return new Response(body, {
-		status: 200,
-		headers: { 'Content-Type': 'text/event-stream' },
-	})
-}
-
-function mockOkSse(content: string, id = 'gen-x'): Response {
-	return sseOfChunks(
-		mockCompletionChunks({
-			id,
-			content,
-			usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
-		})
-	)
-}
+import {
+	mockCompletionChunks,
+	mockChunkStream,
+	sseOfChunks,
+	mockOkSse,
+} from '../fixtures/completions.js'
 
 describe('Agent', () => {
 	let fetchSpy: ReturnType<typeof vi.spyOn>

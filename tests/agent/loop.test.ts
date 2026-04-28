@@ -7,28 +7,11 @@ import { Tool } from "../../src/tool/Tool.js";
 import { InMemorySessionStore } from "../../src/session/index.js";
 import type { CompletionChunk } from "../../src/openrouter/index.js";
 import type { ToolCall, Usage } from "../../src/types/index.js";
-import { mockCompletionChunks } from "../fixtures/completions.js";
-
-/** Encode a chunk array as an SSE Response. */
-function sseOfChunks(chunks: CompletionChunk[]): Response {
-  const body =
-    chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") +
-    `data: [DONE]\n\n`;
-  return new Response(body, {
-    status: 200,
-    headers: { "Content-Type": "text/event-stream" },
-  });
-}
-
-function mockOkSse(content: string, id = "gen-x"): Response {
-  return sseOfChunks(
-    mockCompletionChunks({
-      id,
-      content,
-      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
-    }),
-  );
-}
+import {
+  mockCompletionChunks,
+  sseOfChunks,
+  mockOkSse,
+} from "../fixtures/completions.js";
 
 /**
  * Build a series of CompletionChunks that emit `content` as a single text

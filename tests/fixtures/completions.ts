@@ -146,3 +146,44 @@ export function mockChunkStream(
     for (const c of chunks) yield c;
   })();
 }
+
+/**
+ * Encode a `CompletionChunk[]` as an SSE `Response`, the wire shape
+ * `OpenRouterClient.completeStream` parses. Terminates the stream with
+ * `data: [DONE]`.
+ *
+ * @param chunks - the chunks to serialise, in order
+ * @returns a `Response` with `Content-Type: text/event-stream` and status 200
+ * @example
+ * fetchSpy.mockResolvedValue(sseOfChunks(mockCompletionChunks({ content: "hi" })));
+ */
+export function sseOfChunks(chunks: CompletionChunk[]): Response {
+  const body =
+    chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") +
+    `data: [DONE]\n\n`;
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+/**
+ * Sugar for a successful SSE response carrying a single text completion with
+ * a small fixed usage block (5/3/8). Use when a test only cares that the
+ * agent received some assistant text.
+ *
+ * @param content - the assistant text content to emit
+ * @param id - optional generation id, defaults to `"gen-x"`
+ * @returns a `Response` ready to hand back from a mocked `fetch`
+ * @example
+ * fetchSpy.mockResolvedValue(mockOkSse("hi there"));
+ */
+export function mockOkSse(content: string, id = "gen-x"): Response {
+  return sseOfChunks(
+    mockCompletionChunks({
+      id,
+      content,
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+    })
+  );
+}

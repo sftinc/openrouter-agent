@@ -2,19 +2,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
 import { Agent, Tool } from "../../src/index.js";
 import type { AgentEvent } from "../../src/index.js";
-import type { CompletionChunk } from "../../src/openrouter/index.js";
-import { mockCompletionChunks } from "../fixtures/completions.js";
-
-/** Encode a chunk array as an SSE Response (what OpenRouterClient.completeStream parses). */
-function sseOfChunks(chunks: CompletionChunk[]): Response {
-  const body =
-    chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") +
-    `data: [DONE]\n\n`;
-  return new Response(body, {
-    status: 200,
-    headers: { "Content-Type": "text/event-stream" },
-  });
-}
+import { mockCompletionChunks, sseOfChunks } from "../fixtures/completions.js";
 
 function completionWithToolCall(id: string, name: string, args: Record<string, unknown>): Response {
   return sseOfChunks(
