@@ -179,6 +179,27 @@ export type AgentRunOptions = Omit<RunLoopOptions, "parentRunId"> & {
 const DEFAULT_INPUT_SCHEMA = z.object({ input: z.string() });
 
 /**
+ * Hidden marker used to thread the inner {@link Result} from an Agent's
+ * tool wrapper to its synthesized success/error display hooks via the
+ * per-invocation `metadata` object identity. The property is attached
+ * non-enumerably so it stays invisible to JSON serialization, `Object.keys`,
+ * `console.log`, and any downstream consumer reading `tool:end.metadata`.
+ *
+ * Why a Symbol on `metadata` rather than a closure variable?
+ * `Tool.ts` documents that tool instances are immutable and may be reused
+ * across concurrent runs. A single shared closure (`let lastResult`) would
+ * race when the same child Agent is invoked concurrently from multiple
+ * parents: the second run's `execute` would overwrite the first's captured
+ * Result before the first run's loop emitted `tool:end`. Binding the Result
+ * to the per-invocation `metadata` object identity — which the loop
+ * forwards verbatim from `execute`'s ToolResult to the success/error
+ * display hooks — keeps each invocation's Result attached to its own
+ * invocation. Garbage-collected naturally when the metadata object
+ * becomes unreachable.
+ */
+const INNER_RESULT_KEY = Symbol("agentInnerResult");
+
+/**
  * Reshape a Tool's `args` into the input shape the AgentDisplayHooks
  * expect (`string | Message[]`). When the Agent uses the default
  * `{ input: string }` schema, return the inner string; otherwise pass
@@ -259,13 +280,26 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
     const inputSchema =
       config.inputSchema ?? (DEFAULT_INPUT_SCHEMA as unknown as z.ZodType<Input>);
 
-    // Captured per-invocation by `execute`; read by the synthesized display
-    // hooks (success/error) when the parent's loop emits tool:end. The two
-    // callsites are synchronous within executeToolCall, so a single shared
-    // closure variable is safe under per-invocation usage.
-    let lastResult: Result | null = null;
-
     const agentDisplay = config.display;
+
+    // The synthesized success/error hooks need this invocation's inner
+    // Result to forward to the user's `agentDisplay.success`/`.error`. We
+    // can't use a closure variable here: a single shared `lastResult`
+    // would race when the same child Agent is shared across concurrent
+    // parent runs, since `execute`'s assignment can be overwritten by a
+    // sibling invocation's `execute` resolving in between the loop's
+    // microtasks. Instead, `execute` attaches the Result to the
+    // per-invocation `metadata` object (via `INNER_RESULT_KEY`, a hidden
+    // non-enumerable Symbol property), and the hooks pluck it back off
+    // their own `metadata` argument — `loop.ts` forwards `result.metadata`
+    // identity-preservingly to the success/error display hooks.
+    const readInnerResult = (
+      metadata: Record<string, unknown> | undefined
+    ): Result | undefined => {
+      if (!metadata) return undefined;
+      const v = (metadata as Record<PropertyKey, unknown>)[INNER_RESULT_KEY];
+      return v as Result | undefined;
+    };
 
     const synthesizedToolDisplay: ToolDisplayHooks<Input> | undefined = agentDisplay
       ? {
@@ -283,8 +317,8 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
             : undefined,
           success:
             agentDisplay.success || agentDisplay.end
-              ? () => {
-                  const result = lastResult;
+              ? (_args, _output, metadata) => {
+                  const result = readInnerResult(metadata);
                   if (!result) return {};
                   const hook = agentDisplay.success ?? agentDisplay.end;
                   return hook!(result);
@@ -292,8 +326,8 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
               : undefined,
           error:
             agentDisplay.error || agentDisplay.end
-              ? () => {
-                  const result = lastResult;
+              ? (_args, _err, metadata) => {
+                  const result = readInnerResult(metadata);
                   if (!result) return {};
                   const hook = agentDisplay.error ?? agentDisplay.end;
                   return hook!(result);
@@ -335,14 +369,37 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
         });
         try {
           const result = await handle.result;
-          lastResult = result; // captured for synthesized display hooks
-          const metadata = config.asTool?.metadata?.(result, args);
+          // Build the metadata object first so we can attach the inner
+          // Result to it. When the user supplies `asTool.metadata`, use
+          // that object; otherwise (and when display hooks are configured)
+          // create a fresh empty object so the Symbol attachment has a
+          // home. When neither display nor asTool.metadata is configured
+          // we still attach to an internal object — the loop only sees it
+          // if at least one path needs it.
+          const userMetadata = config.asTool?.metadata?.(result, args);
+          const needsResultThread = synthesizedToolDisplay !== undefined;
+          const metadata =
+            userMetadata !== undefined
+              ? userMetadata
+              : needsResultThread
+                ? ({} as Record<string, unknown>)
+                : undefined;
+          if (metadata && needsResultThread) {
+            // Non-enumerable so JSON.stringify and Object.keys ignore it,
+            // keeping the observable `tool:end.metadata` identical to what
+            // the user supplied.
+            Object.defineProperty(metadata, INNER_RESULT_KEY, {
+              value: result,
+              enumerable: false,
+              writable: false,
+              configurable: true,
+            });
+          }
           if (result.stopReason === "error") {
             return { error: result.error?.message ?? "subagent errored", metadata };
           }
           return { content: result.text, metadata };
         } catch (err) {
-          lastResult = null;
           return { error: err instanceof Error ? err.message : String(err) };
         }
       },

@@ -797,3 +797,119 @@ describe('Agent — asTool.metadata', () => {
     expect(toolEnd?.metadata?.sawError).toBe(true)
   })
 });
+
+describe('Agent — subagent display under concurrent parent runs', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch')
+    process.env.OPENROUTER_API_KEY = 'sk-test'
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  test('display.success captures the right Result when the same child Agent is shared across concurrent parent runs', async () => {
+    // Regression: a single shared `lastResult` closure variable would race
+    // here. Run two parent runs concurrently against the SAME child Agent
+    // instance; assert each parent's tool:end display.content reflects its
+    // own child output, not the sibling's.
+
+    // Two distinct child outputs the parents should see:
+    const childOutputs: Record<string, string> = {
+      'parent-A': 'AAA',
+      'parent-B': 'BBB',
+    }
+
+    // Route fetch by inspecting the request body: the parent first turn
+    // emits a tool_call response; the child turn returns the per-parent
+    // text; the parent final turn returns a closing message. We
+    // discriminate parents via the user prompt embedded in the messages.
+    fetchSpy.mockImplementation(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const body = JSON.parse((init?.body as string) ?? '{}') as {
+        messages: { role: string; content: string | null; tool_calls?: unknown }[]
+      }
+      const userText = body.messages.find((m) => m.role === 'user')?.content ?? ''
+
+      // Discriminate parent A vs B by the per-parent suffix appearing
+      // anywhere in the conversation messages. Parent A's prompt is
+      // 'parent-A', child input is 'topic-A'.
+      const isA = body.messages.some((m) =>
+        typeof m.content === 'string' && (m.content.includes('parent-A') || m.content.includes('topic-A'))
+      )
+      const parentKey = isA ? 'parent-A' : 'parent-B'
+
+      const lastMsg = body.messages[body.messages.length - 1]
+      const isToolReply = lastMsg?.role === 'tool'
+      const hasAssistantWithToolCalls = body.messages.some(
+        (m) => m.role === 'assistant' && m.tool_calls
+      )
+
+      // Heuristic: if there's no assistant turn yet, this is either the
+      // parent's first turn (asking for the tool) or the child's first
+      // turn (asking for output). Distinguish by checking for the child's
+      // user input "topic-A" / "topic-B".
+      if (!hasAssistantWithToolCalls && !isToolReply) {
+        const isChildTurn = userText.startsWith('topic-')
+        if (isChildTurn) {
+          // Child run: return its per-parent text.
+          return mockOkSse(childOutputs[parentKey]!, `${parentKey}-child`)
+        }
+        // Parent first turn: emit tool_call to invoke 'child'.
+        return sseOfChunks(
+          mockCompletionChunks({
+            id: `${parentKey}-parent-1`,
+            finish_reason: 'tool_calls',
+            tool_calls: [
+              {
+                id: `${parentKey}-c1`,
+                type: 'function',
+                function: {
+                  name: 'child',
+                  arguments: JSON.stringify({ input: `topic-${parentKey.slice(-1)}` }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          })
+        )
+      }
+
+      // Parent final turn after the tool reply.
+      return mockOkSse(`${parentKey}-final`, `${parentKey}-parent-2`)
+    })
+
+    // ONE shared child Agent instance — this is the whole point of the
+    // test. Display.success captures the inner Result's text.
+    const child = new Agent({
+      name: 'child',
+      description: 'sub',
+      display: {
+        success: (result) => ({ title: 'done', content: result.text }),
+      },
+    })
+
+    // Two parent agents (separate instances), but it doesn't matter —
+    // they share the same `child` tool reference. Concurrent runs.
+    const parentA = new Agent({ name: 'parentA', description: 'p', tools: [child] })
+    const parentB = new Agent({ name: 'parentB', description: 'p', tools: [child] })
+
+    const collect = async (run: AsyncIterable<{ type: string; toolName?: string; display?: { content?: unknown } }>) => {
+      const out: { type: string; toolName?: string; display?: { content?: unknown } }[] = []
+      for await (const ev of run) out.push(ev)
+      return out
+    }
+
+    const [eventsA, eventsB] = await Promise.all([
+      collect(parentA.run('parent-A')) as ReturnType<typeof collect>,
+      collect(parentB.run('parent-B')) as ReturnType<typeof collect>,
+    ])
+
+    const endA = eventsA.find((e) => e.type === 'tool:end' && e.toolName === 'child')
+    const endB = eventsB.find((e) => e.type === 'tool:end' && e.toolName === 'child')
+
+    expect(endA?.display?.content).toBe('AAA')
+    expect(endB?.display?.content).toBe('BBB')
+  })
+});
