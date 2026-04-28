@@ -33,12 +33,13 @@ describe("displayOf", () => {
       type: "tool:end",
       runId: "r1",
       toolUseId: "t1",
+      toolName: "calc",
       output: "ok",
       startedAt: 0,
       endedAt: 2000,
       elapsedMs: 2000,
     };
-    expect(displayOf(ev).title).toBe("Completed tool in 2s");
+    expect(displayOf(ev).title).toBe("Completed calc in 2s");
   });
 
   test("falls back for message:delta variant", () => {

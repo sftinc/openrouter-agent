@@ -29,22 +29,24 @@ describe("defaultDisplay", () => {
       type: "tool:end",
       runId: "r1",
       toolUseId: "t1",
+      toolName: "web_search",
       output: "result",
       startedAt: 1000,
       endedAt: 3500,
       elapsedMs: 2500,
     };
-    expect(defaultDisplay(ok).title).toBe("Completed tool in 3s");
+    expect(defaultDisplay(ok).title).toBe("Completed web_search in 3s");
     const err: AgentEvent = {
       type: "tool:end",
       runId: "r1",
       toolUseId: "t1",
+      toolName: "web_search",
       error: "something broke",
       startedAt: 1000,
       endedAt: 4200,
       elapsedMs: 3200,
     };
-    expect(defaultDisplay(err).title).toBe("Tool failed after 3s");
+    expect(defaultDisplay(err).title).toBe("web_search failed after 3s");
   });
 
   test("agent:end title shows elapsed seconds", () => {

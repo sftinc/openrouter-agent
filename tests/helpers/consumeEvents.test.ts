@@ -15,6 +15,7 @@ const sampleEvents: AgentEvent[] = [
     type: "tool:end",
     runId: "r1",
     toolUseId: "t1",
+    toolName: "calc",
     output: "ok",
     startedAt: 1,
     endedAt: 2,

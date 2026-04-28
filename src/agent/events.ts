@@ -212,6 +212,8 @@ export type AgentEvent =
       runId: string;
       /** Identifier matching the originating `tool:start`. */
       toolUseId: string;
+      /** Name of the tool as registered on the agent. Mirrors the value on the originating `tool:start` so consumers can render `tool:end` standalone. */
+      toolName: string;
       /** Tool result content (the same value passed back to the model in the `tool` role message). */
       output: unknown;
       /** Optional structured metadata returned by the tool, surfaced for telemetry/UI. */
@@ -232,6 +234,8 @@ export type AgentEvent =
       runId: string;
       /** Identifier matching the originating `tool:start`. */
       toolUseId: string;
+      /** Name of the tool as registered on the agent. Mirrors the value on the originating `tool:start` so consumers can render `tool:end` standalone. For unregistered-tool errors this is the name the model attempted to call. */
+      toolName: string;
       /** Human-readable error message; this same string is sent back to the model. */
       error: string;
       /** Optional structured metadata captured alongside the error. */
@@ -323,7 +327,10 @@ export function defaultDisplay(event: AgentEvent): EventDisplay {
     case "tool:end": {
       const seconds = Math.max(1, Math.round(event.elapsedMs / 1000));
       return {
-        title: "error" in event ? `Tool failed after ${seconds}s` : `Completed tool in ${seconds}s`,
+        title:
+          "error" in event
+            ? `${event.toolName} failed after ${seconds}s`
+            : `Completed ${event.toolName} in ${seconds}s`,
       };
     }
     case "retry": {
