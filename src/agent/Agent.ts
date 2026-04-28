@@ -138,6 +138,17 @@ const DEFAULT_INPUT_SCHEMA = z.object({ input: z.string() });
  * synthesis lossy-but-useful: hooks that destructure `{ input }` work
  * cleanly; hooks that just use the input as a label string get a
  * sensible fallback.
+ *
+ * @remarks
+ * In practice the synthesized hooks always observe a `string` here,
+ * never a `Message[]`. {@link Agent.execute} normalizes its tool-call
+ * args to a `string` before dispatching `runLoop`, so the only values
+ * that can flow into this helper at the as-tool path are the validated
+ * tool arguments — i.e. an object matching the agent's `inputSchema`.
+ * The `Message[]` return branch exists purely for type-shape
+ * compatibility with {@link AgentDisplayHooks} (whose `start`/`title`
+ * accept `string | Message[]` so direct `agent.run()` callers can pass
+ * either) and is unreachable when the Agent is invoked as a tool.
  */
 function inputArgsToAgentInput(args: unknown): string | Message[] {
   if (args && typeof args === "object" && "input" in args) {

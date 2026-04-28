@@ -339,6 +339,183 @@ describe('Agent', () => {
 		expect(outerToolEnd?.display?.content).toBe('text=child-output')
 	})
 
+	test('subagent display.title as a string passes through to outer tool:start', async () => {
+		fetchSpy
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-1',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'topic' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			.mockResolvedValueOnce(mockOkSse('child-output', 'gen-2'))
+			.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
+
+		const child = new Agent({
+			name: 'child',
+			description: 'sub',
+			display: { title: 'Static Title' },
+		})
+		const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+		let outerToolStart: { display?: { title: string; content?: unknown } } | undefined
+		for await (const ev of parent.run('go')) {
+			if (ev.type === 'tool:start' && ev.toolName === 'child') {
+				outerToolStart = ev as never
+			}
+		}
+
+		expect(outerToolStart?.display?.title).toBe('Static Title')
+	})
+
+	test('subagent without display config leaves outer tool:start/tool:end display undefined', async () => {
+		fetchSpy
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-1',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'topic' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			.mockResolvedValueOnce(mockOkSse('child-output', 'gen-2'))
+			.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
+
+		const child = new Agent({ name: 'child', description: 'sub' })
+		const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+		let outerToolStart: { display?: { title: string; content?: unknown } } | undefined
+		let outerToolEnd: { display?: { title: string; content?: unknown } } | undefined
+		for await (const ev of parent.run('go')) {
+			if (ev.type === 'tool:start' && ev.toolName === 'child') {
+				outerToolStart = ev as never
+			}
+			if (ev.type === 'tool:end' && ev.toolName === 'child') {
+				outerToolEnd = ev as never
+			}
+		}
+
+		// With no display config, the loop's resolveToolDisplay returns undefined
+		// and consumers fall back to the helpers' `defaultDisplay`.
+		expect(outerToolStart?.display).toBeUndefined()
+		expect(outerToolEnd?.display).toBeUndefined()
+	})
+
+	test('subagent display.error fires on inner stopReason="error"', async () => {
+		fetchSpy
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-1',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'boom' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			// Child's first (and only) LLM call fails with HTTP 400 — non-retryable.
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ error: { code: 400, message: 'bad' } }), {
+					status: 400,
+					headers: { 'Content-Type': 'application/json' },
+				})
+			)
+			// Parent's follow-up turn after the child returns an error.
+			.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
+
+		const child = new Agent({
+			name: 'child',
+			description: 'sub',
+			retry: { maxAttempts: 1 },
+			display: {
+				error: (result) => ({
+					title: 'Child Failed',
+					content: `err=${result.error?.message ?? ''}`,
+				}),
+			},
+		})
+		const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+		let outerToolEnd:
+			| { display?: { title: string; content?: unknown }; error?: unknown }
+			| undefined
+		for await (const ev of parent.run('go')) {
+			if (ev.type === 'tool:end' && ev.toolName === 'child') {
+				outerToolEnd = ev as never
+			}
+		}
+
+		expect(outerToolEnd?.display?.title).toBe('Child Failed')
+		expect(String(outerToolEnd?.display?.content)).toContain('bad')
+	})
+
+	test('subagent display.end is the fallback for both success and error paths', async () => {
+		fetchSpy
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-1',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'topic' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			.mockResolvedValueOnce(mockOkSse('child-output', 'gen-2'))
+			.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
+
+		const child = new Agent({
+			name: 'child',
+			description: 'sub',
+			display: {
+				end: (result) => ({
+					title: result.stopReason === 'error' ? 'Ended Error' : 'Ended OK',
+					content: 'from-end',
+				}),
+			},
+		})
+		const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+		let outerToolEnd: { display?: { title: string; content?: unknown } } | undefined
+		for await (const ev of parent.run('go')) {
+			if (ev.type === 'tool:end' && ev.toolName === 'child') {
+				outerToolEnd = ev as never
+			}
+		}
+
+		expect(outerToolEnd?.display?.title).toBe('Ended OK')
+		expect(outerToolEnd?.display?.content).toBe('from-end')
+	})
+
 	test('subagent non-message events still bubble to parent stream', async () => {
 		const innerTool = new Tool({
 			name: 'inner_tool',
