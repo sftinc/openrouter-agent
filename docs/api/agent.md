@@ -77,7 +77,44 @@ Source: `src/agent/Agent.ts:49-90`.
 | `maxTurns` | `number` | no | `10` | Maximum LLM-call/tool-execution cycles per run before the loop terminates with `stopReason: "max_turns"`. |
 | `sessionStore` | `SessionStore` | no | `new InMemorySessionStore()` | Backing store for conversation history. The store is consulted only when the caller also passes `options.sessionId`. |
 | `display` | `AgentDisplayHooks` | no | `undefined` | Optional display hooks that decorate `agent:start` and `agent:end` events with human-readable `display` payloads. See [`AgentDisplayHooks`](#agentdisplayhooks). |
+| `asTool` | `{ metadata?: (result: Result, input: Input) => Record<string, unknown> \| undefined } \| undefined` | no | `undefined` | Customizations that fire only when this agent is invoked as a subagent by a parent. `asTool.metadata` computes structured metadata to attach to the outer `tool:end.metadata` field; called once after the inner run resolves. Receives the inner `Result` and the validated input args. Silently ignored when the agent runs at top level (`agent.run(...)` without a parent dispatching it). |
 | `retry` | `RetryConfig` | no | `{ maxAttempts: 3, initialDelayMs: 500, maxDelayMs: 8000, idleTimeoutMs: 60_000, isRetryable: defaultIsRetryable }` | Retry policy for transient LLM-call failures. Retries are scoped to the **pre-first-content-delta** window per turn — once any `message:delta` has been emitted, a subsequent failure is committed (`stopReason: "error"`) and never retried. Set `maxAttempts: 1` to disable retries. See [Retry behavior](#retry-behavior) and [openrouter.md `RetryConfig`](./openrouter.md#retryconfig). |
+
+**`display` bubble-up to outer tool events.** When this agent is invoked as a subagent (passed in another agent's `tools` array), the same `display` payload produced by these hooks is also attached to the parent's outer `tool:start` and `tool:end` events. Configure once, applies in both places. UIs that render only outer tool events (the common case) get the rich titles and content automatically.
+
+### `asTool.metadata` example
+
+Surface token usage and source counts on the outer `tool:end` event so the parent UI can render a "researcher used N sources, M tokens" badge:
+
+```ts
+import { Agent } from "@sftinc/openrouter-agent";
+
+const researcher = new Agent({
+  name: "research_assistant",
+  description: "Multi-step research session.",
+  systemPrompt: "...",
+  tools: [webSearch, currentTime],
+  display: {
+    /* rich hooks here also drive outer tool events */
+  },
+  asTool: {
+    metadata: (result, input) => ({
+      topic: input.input,
+      stopReason: result.stopReason,
+      turns: result.messages.filter((m) => m.role === "assistant").length,
+      totalTokens: result.usage.total_tokens,
+    }),
+  },
+});
+
+const orchestrator = new Agent({
+  name: "orchestrator",
+  description: "...",
+  tools: [researcher],
+});
+```
+
+The model never sees `metadata`; it's a side-channel for the parent's UI / telemetry / billing.
 
 ### `agent.run(input, options?)`
 
@@ -406,6 +443,10 @@ Source: `src/agent/loop.ts:579-805`. `runLoop` is the lower-level driver behind 
 6. **Transactional persistence** — only on a clean terminal stop reason (`done`, `max_turns`, `length`, `content_filter`) is the conversation written back to the session store. On `error` or `aborted` the session is left exactly as it was, so the client can safely retry with the same input (`src/agent/loop.ts:777-784`).
 7. **`agent:end`** — emitted last with the final `Result`, including `text` (last assistant text), `messages`, `stopReason`, accumulated `usage`, every observed `generationIds`, and `error?` (only when `stopReason === "error"`).
 
+### `Result.messages`
+
+Contains only the messages this run produced — the new user input, the assistant turns, and the `role: "tool"` results from this run's tool calls. Prior session history is **not** included; read it from `sessionStore.get(sessionId)` if needed. The session store still receives the full updated transcript on persist; only the live `Result` object is trimmed.
+
 ### `Result.stopReason`
 
 Source: `src/types/Message.ts:303-309`.
@@ -442,6 +483,8 @@ Tool-call deltas, `turnUsage`, `contentBuf`, `toolCallBuf`, `finishReason`, and 
 ### Subagent event bubbling
 
 When an `Agent` is invoked as a tool, the wrapper `execute` (`src/agent/Agent.ts:175-203`) creates an internal `AgentRun` whose `emit` forwards every event to **both** the parent's `deps.emit` and the inner handle. The result is that a single outer event stream contains interleaved events from arbitrarily nested subagent runs. Each `agent:start` carries `parentRunId` (set from `deps.runId` at the wrapper boundary); each `agent:end` carries the matching `runId`. Top-level consumers must filter by `runId` to identify a specific run's terminal event — `AgentRun` does this internally so `await run` always resolves to the *outer* run's `Result`.
+
+**Subagent message events do not bubble.** When an Agent runs as a subagent, its inner `message` and `message:delta` events stay on the subagent's own `AgentRun` and are **not** forwarded to the parent's NDJSON stream. Semantically a subagent is a tool from the parent's perspective; its internal "assistant said X" reasoning addresses the parent loop, not the end user, so it would only confuse a chat UI to render it as an assistant bubble. All other inner events (`agent:start`, `agent:end`, `tool:start`, `tool:progress`, `tool:end`, `retry`, `error`) bubble upward unchanged for full observability of subagent activity.
 
 ### Error handling summary
 
