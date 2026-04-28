@@ -16,3 +16,4 @@ docs/*
 !docs/api/**
 !docs/openrouter/
 !docs/openrouter/**
+tmp/
