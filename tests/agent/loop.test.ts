@@ -1,11 +1,34 @@
-import { describe, test, expect, vi } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { z } from "zod";
 import { runLoop, type RunLoopConfig } from "../../src/agent/loop.js";
 import type { AgentEvent } from "../../src/agent/events.js";
+import { Agent } from "../../src/agent/Agent.js";
 import { Tool } from "../../src/tool/Tool.js";
-import { InMemorySessionStore } from "../../src/session/InMemorySessionStore.js";
+import { InMemorySessionStore } from "../../src/session/index.js";
 import type { CompletionChunk } from "../../src/openrouter/index.js";
 import type { ToolCall, Usage } from "../../src/types/index.js";
+import { mockCompletionChunks } from "../fixtures/completions.js";
+
+/** Encode a chunk array as an SSE Response. */
+function sseOfChunks(chunks: CompletionChunk[]): Response {
+  const body =
+    chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") +
+    `data: [DONE]\n\n`;
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+function mockOkSse(content: string, id = "gen-x"): Response {
+  return sseOfChunks(
+    mockCompletionChunks({
+      id,
+      content,
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+    }),
+  );
+}
 
 /**
  * Build a series of CompletionChunks that emit `content` as a single text
@@ -1171,5 +1194,71 @@ describe("runLoop — retry behavior", () => {
     expect(calls).toBe(1);
     expect(events.filter((e) => e.type === "retry")).toHaveLength(0);
     expect(events.filter((e) => e.type === "error")).toHaveLength(1);
+  });
+});
+
+describe("Result.messages trim", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+    process.env.OPENROUTER_API_KEY = "sk-test";
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  test("Result.messages contains only this run's contribution, not prior session history", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockOkSse("first answer", "gen-1"))
+      .mockResolvedValueOnce(mockOkSse("second answer", "gen-2"));
+
+    const sessionStore = new InMemorySessionStore();
+    const agent = new Agent({ name: "a", description: "d", sessionStore });
+
+    const first = await agent.run("first question", { sessionId: "s1" });
+    expect(first.messages.length).toBe(2);
+    expect(first.messages[0]).toMatchObject({ role: "user", content: "first question" });
+    expect(first.messages[1]).toMatchObject({ role: "assistant", content: "first answer" });
+
+    const second = await agent.run("second question", { sessionId: "s1" });
+    expect(second.messages.length).toBe(2);
+    expect(second.messages[0]).toMatchObject({ role: "user", content: "second question" });
+    expect(second.messages[1]).toMatchObject({ role: "assistant", content: "second answer" });
+
+    const stored = await sessionStore.get("s1");
+    expect(stored?.messages.length).toBe(4);
+  });
+
+  test("agent:end.result.messages matches the awaited result.messages (no divergence)", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockOkSse("answer-1", "gen-1"))
+      .mockResolvedValueOnce(mockOkSse("answer-2", "gen-2"));
+
+    const sessionStore = new InMemorySessionStore();
+    const agent = new Agent({ name: "a", description: "d", sessionStore });
+
+    await agent.run("q1", { sessionId: "s2" });
+
+    const run = agent.run("q2", { sessionId: "s2" });
+    let endEvent: { type: "agent:end"; result: { messages: unknown[] } } | undefined;
+    for await (const ev of run) {
+      if (ev.type === "agent:end") endEvent = ev as never;
+    }
+    const awaited = await run.result;
+
+    expect(endEvent?.result.messages.length).toBe(2);
+    expect(awaited.messages.length).toBe(2);
+    expect(endEvent?.result.messages).toEqual(awaited.messages);
+  });
+
+  test("non-session-backed run: Result.messages carries the new user input + new assistant reply", async () => {
+    fetchSpy.mockResolvedValueOnce(mockOkSse("hi back", "gen-1"));
+    const agent = new Agent({ name: "a", description: "d" });
+    const result = await agent.run("hello");
+    expect(result.messages.length).toBe(2);
+    expect(result.messages[0]).toMatchObject({ role: "user", content: "hello" });
+    expect(result.messages[1]).toMatchObject({ role: "assistant", content: "hi back" });
   });
 });

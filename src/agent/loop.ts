@@ -431,16 +431,23 @@ async function executeToolCall(
  *   {@link RunLoopConfig.systemPrompt}.
  * @param sessionMessages Persisted prior messages from the session store,
  *   or `null` if no session is in use.
- * @returns The resolved `system` content and the ordered `messages` array
- *   to seed the loop with (no system-role messages — the system prompt is
- *   prepended only on the wire).
+ * @returns An object with three fields:
+ *   - `system`: the resolved system prompt content (or `undefined` if none).
+ *   - `messages`: the ordered seed message array for the loop (no
+ *     system-role messages — the system prompt is prepended only on the
+ *     wire). Order is `[...sessionMessages (system-stripped), ...newInput
+ *     (system-stripped)]`.
+ *   - `sessionCount`: the count of session-derived messages prepended to
+ *     the seed (post system-strip). Used by the caller to slice them off
+ *     `Result.messages` so the reported result reflects only this run's
+ *     contribution rather than the full historical transcript.
  */
 function resolveInitialMessages(
   input: string | Message[],
   systemOverride: string | undefined,
   systemFromConfig: string | undefined,
   sessionMessages: Message[] | null
-): { system: string | undefined; messages: Message[] } {
+): { system: string | undefined; messages: Message[]; sessionCount: number } {
   const messages: Message[] = [];
 
   let systemContent: string | undefined;
@@ -454,9 +461,13 @@ function resolveInitialMessages(
     systemContent = systemFromConfig;
   }
 
+  let sessionCount = 0;
   if (sessionMessages) {
     for (const m of sessionMessages) {
-      if (m.role !== "system") messages.push(m);
+      if (m.role !== "system") {
+        messages.push(m);
+        sessionCount++;
+      }
     }
   }
 
@@ -469,7 +480,7 @@ function resolveInitialMessages(
     messages.push({ role: "user", content: input });
   }
 
-  return { system: systemContent, messages };
+  return { system: systemContent, messages, sessionCount };
 }
 
 /**
@@ -631,7 +642,7 @@ export async function runLoop(
       ? await config.sessionStore.get(options.sessionId)
       : null;
   const sessionMessages = sessionRecord?.messages ?? null;
-  const { system: systemContent, messages } = resolveInitialMessages(
+  const { system: systemContent, messages, sessionCount } = resolveInitialMessages(
     input,
     options.system,
     config.systemPrompt,
@@ -881,7 +892,7 @@ export async function runLoop(
 
   const result: Result = {
     text: lastAssistantText(messages),
-    messages,
+    messages: messages.slice(sessionCount),
     stopReason,
     usage,
     generationIds,
