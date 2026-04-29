@@ -20,7 +20,8 @@
 		"websearch": "tsx --env-file=.env examples/websearch.ts",
 		"release": "commit-and-tag-version",
 		"release:minor": "commit-and-tag-version --release-as minor",
-		"release:patch": "commit-and-tag-version --release-as patch"
+		"release:patch": "commit-and-tag-version --release-as patch",
+		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
 		"zod": "^4.3.6"

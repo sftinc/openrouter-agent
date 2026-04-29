@@ -76,11 +76,25 @@ git push --follow-tags     # push commits + the new version tag
 
 The release command bumps `package.json`, prepends a new section to `CHANGELOG.md`, creates a `chore(release): X.Y.Z` commit, and tags it `vX.Y.Z`.
 
-## "Push" always means release-then-push
+**Start every release from a clean working tree.** `.versionrc.json` sets `commitAll: true`, which means any unrelated staged or untracked changes get folded into the `chore(release): X.Y.Z` commit with a misleading message. Commit (or stash) unrelated work first.
+
+## Publishing to npm
+
+The package is published as `@sftinc/openrouter-agent` on npmjs.com. After a release is cut and pushed, ship the tarball:
+
+```bash
+npm publish --access public
+```
+
+`--access public` is required the first time a scoped package is published; after that the access flag is sticky and can be omitted. The `prepublishOnly` script runs `npm run build` automatically so `dist/` is always fresh in the published tarball.
+
+If you want to verify what will ship before publishing, run `npm publish --dry-run`.
+
+## "Push" always means release-then-push-then-publish
 
 When the user asks to push, run the release flow — never a bare `git push`:
 
 1. Check `git log <last-vX.Y.Z-tag>..HEAD` for commits since the last version tag.
-2. If any of those commits are release-worthy types (`feat`, `fix`, `perf`, `refactor`, `style`, `revert`) → run `npm run release`, then `git push --follow-tags`.
-3. If the only unreleased commits are hidden types (`docs`, `chore`, `test`, `build`, `ci`) or there are no new commits → just `git push` (no new version to cut).
+2. If any of those commits are release-worthy types (`feat`, `fix`, `perf`, `refactor`, `style`, `revert`) → run `npm run release`, then `git push --follow-tags`, then `npm publish` (ask before publishing if uncertain).
+3. If the only unreleased commits are hidden types (`docs`, `chore`, `test`, `build`, `ci`) or there are no new commits → just `git push` (no new version to cut, nothing to publish).
 4. If the user explicitly says "push without releasing" (or equivalent), honor that and run a bare `git push`.
