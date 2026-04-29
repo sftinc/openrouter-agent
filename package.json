@@ -3,6 +3,14 @@
 	"version": "1.0.0",
 	"description": "Agent loop wrapper for OpenRouter",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/sftinc/openrouter-agent.git"
+	},
+	"homepage": "https://github.com/sftinc/openrouter-agent#readme",
+	"bugs": {
+		"url": "https://github.com/sftinc/openrouter-agent/issues"
+	},
 	"type": "module",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
