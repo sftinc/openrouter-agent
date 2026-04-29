@@ -874,7 +874,11 @@ export async function runLoop(
       tool_calls: hasToolCalls ? assembledToolCalls : undefined,
     };
     messages.push(assistantMsg);
-    emit({ type: "message", runId, message: assistantMsg });
+    emit({
+      type: hasToolCalls ? "message:preamble" : "message",
+      runId,
+      message: assistantMsg,
+    });
 
     if (turnError) {
       stopReason = "error";

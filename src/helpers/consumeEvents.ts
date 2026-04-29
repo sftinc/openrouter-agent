@@ -22,7 +22,11 @@ export interface AgentEventHandlers {
   onAgentStart?: (e: Extract<AgentEvent, { type: "agent:start" }>) => void | Promise<void>;
   /** Called once at the end of a run with the final {@link Result}. */
   onAgentEnd?: (e: Extract<AgentEvent, { type: "agent:end" }>) => void | Promise<void>;
-  /** Called once per assistant message (including tool-call messages). */
+  /**
+   * Called once per run, when the assistant produces its final answer (a
+   * turn that finishes with no `tool_calls`). Tool-call assistant messages
+   * fire {@link AgentEventHandlers.onMessagePreamble} instead.
+   */
   onMessage?: (e: Extract<AgentEvent, { type: "message" }>) => void | Promise<void>;
   /**
    * Called once per turn whose assembled assistant message has `tool_calls`.

@@ -903,6 +903,114 @@ describe("runLoop", () => {
       expect(toolEnd.elapsedMs).toBe(toolEnd.endedAt - toolEnd.startedAt);
     }
   });
+
+  test("emits message (not message:preamble) for a final-answer turn", async () => {
+    const events: AgentEvent[] = [];
+    const cfg = mkConfig();
+
+    await runLoop(cfg, "hi", {}, collect(events));
+
+    const messageEvents = events.filter((e) => e.type === "message");
+    const preambleEvents = events.filter((e) => e.type === "message:preamble");
+    expect(messageEvents).toHaveLength(1);
+    expect(preambleEvents).toHaveLength(0);
+  });
+
+  test("emits message:preamble (not message) for a tool-call turn", async () => {
+    const events: AgentEvent[] = [];
+
+    const echo = new Tool({
+      name: "echo",
+      description: "echo back the input",
+      inputSchema: z.object({ text: z.string() }),
+      execute: async ({ text }) => text,
+    });
+
+    const openrouter = {
+      completeStream: vi.fn()
+        .mockImplementationOnce(() =>
+          mockStream(
+            mockChunks({
+              id: "gen-1",
+              content: "I'll echo this.",
+              tool_calls: [
+                { id: "call-1", type: "function", function: { name: "echo", arguments: '{"text":"hi"}' } },
+              ],
+              finish_reason: "tool_calls",
+            })
+          )
+        )
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({ id: "gen-2", content: "done", finish_reason: "stop" }))
+        ),
+    };
+
+    const cfg = mkConfig({ openrouter: openrouter as any, tools: [echo] });
+    await runLoop(cfg, "go", {}, collect(events));
+
+    const messageEvents = events.filter((e) => e.type === "message");
+    const preambleEvents = events.filter((e) => e.type === "message:preamble");
+
+    // Turn 1 (tool call) → message:preamble; turn 2 (final answer) → message.
+    expect(preambleEvents).toHaveLength(1);
+    expect(messageEvents).toHaveLength(1);
+
+    if (preambleEvents[0]?.type === "message:preamble") {
+      expect(preambleEvents[0].message.role).toBe("assistant");
+      expect(preambleEvents[0].message.content).toBe("I'll echo this.");
+      expect(preambleEvents[0].message.tool_calls?.[0]?.function.name).toBe("echo");
+    }
+    if (messageEvents[0]?.type === "message") {
+      expect(messageEvents[0].message.role).toBe("assistant");
+      expect(messageEvents[0].message.content).toBe("done");
+      expect(messageEvents[0].message.tool_calls).toBeUndefined();
+    }
+  });
+
+  test("preamble assistant message still appears in Result.messages and is sequenced before tool result", async () => {
+    const events: AgentEvent[] = [];
+
+    const echo = new Tool({
+      name: "echo",
+      description: "echo back the input",
+      inputSchema: z.object({ text: z.string() }),
+      execute: async ({ text }) => text,
+    });
+
+    const openrouter = {
+      completeStream: vi.fn()
+        .mockImplementationOnce(() =>
+          mockStream(
+            mockChunks({
+              id: "gen-1",
+              content: "preamble",
+              tool_calls: [
+                { id: "call-1", type: "function", function: { name: "echo", arguments: '{"text":"hi"}' } },
+              ],
+              finish_reason: "tool_calls",
+            })
+          )
+        )
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({ id: "gen-2", content: "final", finish_reason: "stop" }))
+        ),
+    };
+
+    const cfg = mkConfig({ openrouter: openrouter as any, tools: [echo] });
+    await runLoop(cfg, "go", {}, collect(events));
+
+    const end = events.find((e) => e.type === "agent:end");
+    if (end?.type !== "agent:end") throw new Error("missing agent:end");
+
+    const roles = end.result.messages.map((m) => m.role);
+    // user → assistant(preamble+tool_calls) → tool → assistant(final)
+    expect(roles).toEqual(["user", "assistant", "tool", "assistant"]);
+
+    const preambleAssistant = end.result.messages[1];
+    expect(preambleAssistant?.role).toBe("assistant");
+    expect(preambleAssistant?.content).toBe("preamble");
+    expect(preambleAssistant?.tool_calls?.[0]?.function.name).toBe("echo");
+  });
 });
 
 describe("Usage accumulation — multimodal & cost", () => {
