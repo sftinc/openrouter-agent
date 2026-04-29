@@ -1290,6 +1290,25 @@ describe("runLoop — function-form systemPrompt", () => {
     const sysMsg = reqMessages.find((m: any) => m.role === "system");
     expect(sysMsg?.content).toBe("override for alice");
   });
+
+  test("string-form systemPrompt is unchanged even with context supplied", async () => {
+    const client = {
+      completeStream: vi.fn().mockImplementation(() =>
+        mockStream(mockChunks({ content: "ok" }))
+      ),
+    };
+
+    const cfg = mkConfig({
+      openrouter: client as any,
+      systemPrompt: "literal prompt — should not be modified",
+    });
+
+    await runLoop(cfg, "hi", { context: { ignored: true } }, () => {});
+
+    const reqMessages = client.completeStream.mock.calls[0][0].messages as any[];
+    const sysMsg = reqMessages.find((m: any) => m.role === "system");
+    expect(sysMsg?.content).toBe("literal prompt — should not be modified");
+  });
 });
 
 describe("Result.messages trim", () => {
