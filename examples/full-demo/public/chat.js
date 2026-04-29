@@ -141,6 +141,8 @@ function defaultDisplay(event) {
       return { title: "Message delta" };
     case "message":
       return { title: "Message" };
+    case "message:preamble":
+      return { title: "Preamble" };
     case "tool:start":
       return { title: `Running ${event.toolName}` };
     case "tool:progress":
@@ -248,8 +250,11 @@ async function runRequest(message) {
         break;
       }
       case "tool:start": {
-        // A tool call interrupts the current assistant bubble; next text
-        // belongs to a fresh bubble for the post-tool turn.
+        // A tool call interrupts the current turn's assistant text. We never
+        // promoted the buffered deltas to a visible bubble (see message:delta
+        // handler), so just clear the buffer — the matching message:preamble
+        // event that closes this turn (or arrives concurrently) will render
+        // the buffered text into the activity card.
         assistantEl = null;
         assistantBuf = "";
         const d = displayOf(event);
@@ -285,29 +290,47 @@ async function runRequest(message) {
       }
       case "message:delta": {
         if (typeof event.text !== "string" || event.text.length === 0) break;
-        if (!assistantEl) {
-          assistantEl = addAssistantMessage();
-          assistantBuf = "";
-        }
+        // Buffer text but do NOT render until we know this turn's classifier.
+        // - On `message:preamble` (turn ends in tool calls): the preamble
+        //   case above renders the buffered text into the activity card.
+        // - On `message` (final turn): the case below renders the buffered
+        //   text into a fresh assistant bubble.
+        // - On `tool:start` arriving before either (tool-only turn with no
+        //   text), the buffer stays empty and nothing renders.
         assistantBuf += event.text;
-        renderedAssistant = true;
-        renderMarkdown(assistantEl, assistantBuf);
-        scroll();
+        break;
+      }
+      case "message:preamble": {
+        // Preamble text accompanies a tool call: model narrating its plan
+        // before invoking tools. Render it as the activity card's content
+        // (next to the tool title) rather than as a peer assistant bubble.
+        // Reset any in-progress assistant bubble state — the preamble does
+        // not start one.
+        assistantEl = null;
+        assistantBuf = "";
+        const text =
+          typeof event.message?.content === "string" ? event.message.content : "";
+        if (text.length > 0) {
+          if (!activityCard) {
+            activityCard = addToolCard(null, "Preamble", text);
+          } else {
+            setActivityContent(activityCard, text);
+          }
+        }
         break;
       }
       case "message": {
-        // The full assistant message. If we rendered deltas, the bubble is
-        // already up-to-date — just reset state for the next turn. If for
-        // some reason no deltas arrived (e.g. non-streaming fallback), render
-        // the whole content here.
-        if (
-          event.message?.role === "assistant" &&
-          typeof event.message.content === "string" &&
-          event.message.content.length > 0 &&
-          assistantBuf.length === 0
-        ) {
+        // Final-answer message. Render the full assistant content as a chat
+        // bubble. `message:delta` events accumulated text into `assistantBuf`
+        // without rendering; we render it now in one shot. If for some reason
+        // no deltas arrived (e.g. non-streaming fallback), fall back to the
+        // event's own `message.content`.
+        const fallback =
+          typeof event.message?.content === "string" ? event.message.content : "";
+        const text = assistantBuf.length > 0 ? assistantBuf : fallback;
+        if (text.length > 0 && event.message?.role === "assistant") {
           if (!assistantEl) assistantEl = addAssistantMessage();
-          renderMarkdown(assistantEl, event.message.content);
+          renderMarkdown(assistantEl, text);
           renderedAssistant = true;
           scroll();
         }
