@@ -43,7 +43,10 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse): Pro
 	const isKnown = claimed ? (await sessionStore.get(claimed)) !== null : false
 	const sessionId = isKnown ? (claimed as string) : crypto.randomUUID()
 
-	await handleAgentRun(agent, message, res, { sessionId })
+	await handleAgentRun(agent, message, res, {
+		sessionId,
+		runOptions: { context: { timezone: 'America/Chicago' } },
+	})
 }
 
 export async function serveStatic(pathname: string, res: ServerResponse): Promise<void> {
