@@ -266,7 +266,7 @@ agent:start
   → agent:end
 ```
 
-`agent:end` is always the terminal event. `error` fires at most once per run, immediately before a terminal `agent:end` with `stopReason: "error"`. `retry` may fire zero or more times per turn, **only before** the turn's first `message:delta` (the retry window closes once any content has been emitted to the client). A turn that ultimately succeeds after retries emits its `retry` events first, then the normal `message:delta*` / `message`. A turn that exhausts the retry budget emits its retry events, then a single `error`, then `agent:end`.
+`agent:end` is always the terminal event. `error` fires at most once per run, immediately before a terminal `agent:end` with `stopReason: "error"`. `retry` may fire zero or more times per turn, **only before** the turn's first `message:delta` (the retry window closes once any content has been emitted to the client). A turn that ultimately succeeds after retries emits its `retry` events first, then the normal `message:delta*` / (`message:preamble` | `message`). A turn that exhausts the retry budget emits its retry events, then a single `error`, then `agent:end`.
 
 ### `agent:start`
 
