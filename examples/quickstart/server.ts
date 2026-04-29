@@ -1,5 +1,19 @@
+/**
+ * Quickstart — minimal Agent with one custom Tool (a calculator).
+ *
+ * From this repo:
+ *   npm run demo:quickstart
+ *
+ * From a project that has installed `@sftinc/openrouter-agent`:
+ *   1. Copy this file into your project.
+ *   2. Install the runner: `npm i -D tsx zod`
+ *   3. Run: `OPENROUTER_API_KEY=sk-... npx tsx server.ts`
+ *
+ * Env vars:
+ *   OPENROUTER_API_KEY (required) — OpenRouter API key.
+ */
 import { z } from 'zod'
-import { setOpenRouterClient, Tool, Agent } from '../../src/index.js'
+import { setOpenRouterClient, Tool, Agent } from '@sftinc/openrouter-agent'
 
 setOpenRouterClient({
 	max_tokens: 1000,

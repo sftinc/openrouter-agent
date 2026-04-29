@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { handleAgentRun } from '../../src/index.js'
+import { handleAgentRun } from '@sftinc/openrouter-agent'
 import { agent, sessionStore } from './agent.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))

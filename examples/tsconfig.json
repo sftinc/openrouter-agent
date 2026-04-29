@@ -6,7 +6,10 @@
     "declarationMap": false,
     "sourceMap": false,
     "rootDir": "..",
-    "composite": false
+    "composite": false,
+    "paths": {
+      "@sftinc/openrouter-agent": ["../src/index.ts"]
+    }
   },
   "include": ["**/*.ts", "../src/**/*.ts"],
   "exclude": ["**/node_modules"]

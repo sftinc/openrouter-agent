@@ -1,4 +1,20 @@
-import { OpenRouterClient } from '../src/index.js'
+/**
+ * Websearch — direct OpenRouterClient call using OpenRouter's built-in
+ * `openrouter:web_search` tool (Exa engine).
+ *
+ * From this repo:
+ *   npm run websearch                          # default query
+ *   npm run websearch -- "your query here"     # custom query
+ *
+ * From a project that has installed `@sftinc/openrouter-agent`:
+ *   1. Copy this file into your project.
+ *   2. Install the runner: `npm i -D tsx`
+ *   3. Run: `OPENROUTER_API_KEY=sk-... npx tsx websearch.ts "your query"`
+ *
+ * Env vars:
+ *   OPENROUTER_API_KEY (required) — OpenRouter API key.
+ */
+import { OpenRouterClient } from '@sftinc/openrouter-agent'
 
 const query = process.argv[2] ?? 'Current stock price for MSFT'
 

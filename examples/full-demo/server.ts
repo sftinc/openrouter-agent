@@ -1,3 +1,23 @@
+/**
+ * Full demo — HTTP server with a streaming chat UI. Demonstrates streaming
+ * agent events to the browser, a multi-tool agent, and session persistence.
+ *
+ * Entry point: this file. Companion files in the same folder
+ * (`agent.ts`, `backend.ts`, `static/`) are loaded from here.
+ *
+ * From this repo:
+ *   npm run demo:full-demo
+ *   # then open http://localhost:3000
+ *
+ * From a project that has installed `@sftinc/openrouter-agent`:
+ *   1. Copy the entire `examples/full-demo/` folder into your project.
+ *   2. Install runners: `npm i -D tsx zod`
+ *   3. Run: `OPENROUTER_API_KEY=sk-... npx tsx server.ts`
+ *
+ * Env vars:
+ *   OPENROUTER_API_KEY (required) — OpenRouter API key.
+ *   PORT             (optional)   — HTTP port. Defaults to 3000.
+ */
 import { createServer } from 'node:http'
 import { handleChat, serveStatic } from './backend.js'
 

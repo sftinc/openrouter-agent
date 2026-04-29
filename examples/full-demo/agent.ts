@@ -17,7 +17,7 @@
  */
 
 import { z } from 'zod'
-import { setOpenRouterClient, Tool, Agent, InMemorySessionStore } from '../../src/index.js'
+import { setOpenRouterClient, Tool, Agent, InMemorySessionStore } from '@sftinc/openrouter-agent'
 
 /**
  * Registers a process-wide OpenRouter client. Every {@link Agent} constructed

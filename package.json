@@ -14,8 +14,18 @@
 	"type": "module",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		},
+		"./package.json": "./package.json"
+	},
 	"files": [
-		"dist"
+		"dist",
+		"docs/api",
+		"examples"
 	],
 	"scripts": {
 		"build": "tsc",

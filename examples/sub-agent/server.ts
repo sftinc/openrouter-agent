@@ -1,4 +1,20 @@
-import { setOpenRouterClient, Agent } from '../../src/index.js'
+/**
+ * Sub-agent — an Agent passed into another Agent's `tools` array. The parent
+ * invokes the child like any tool; the child runs its own loop and returns
+ * its final text back to the parent.
+ *
+ * From this repo:
+ *   npm run demo:sub-agent
+ *
+ * From a project that has installed `@sftinc/openrouter-agent`:
+ *   1. Copy this file into your project.
+ *   2. Install the runner: `npm i -D tsx`
+ *   3. Run: `OPENROUTER_API_KEY=sk-... npx tsx server.ts`
+ *
+ * Env vars:
+ *   OPENROUTER_API_KEY (required) — OpenRouter API key.
+ */
+import { setOpenRouterClient, Agent } from '@sftinc/openrouter-agent'
 
 setOpenRouterClient({
 	max_tokens: 1000,

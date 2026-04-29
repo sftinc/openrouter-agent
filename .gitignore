@@ -8,12 +8,9 @@ coverage/
 
 .claude/
 
-# Only docs/api/ (hand-written API reference) and docs/openrouter/
-# (upstream wire reference, source of truth per CLAUDE.md) are tracked.
+# Only docs/api/ (hand-written API reference) is tracked.
 # Everything else under docs/ is local-only.
 docs/*
 !docs/api/
 !docs/api/**
-!docs/openrouter/
-!docs/openrouter/**
 tmp/
