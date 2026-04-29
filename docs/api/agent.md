@@ -187,7 +187,7 @@ Source: `src/agent/Agent.ts:107-114`. Defined as `Omit<RunLoopOptions, "parentRu
 | `client` | `LLMConfig` | no | `undefined` | Per-call OpenRouter overrides; merged on top of `AgentConfig.client` (`src/agent/loop.ts:590-593`). |
 | `parentRunId` | `string` | no | `undefined` | If set, the resulting `agent:start` event reports this run as a child of `parentRunId`. Subagent invocations set this automatically inside the tool wrapper; explicit callers rarely need it. |
 | `retry` | `RetryConfig` | no | inherits `AgentConfig.retry` | Per-call retry override. Merged field-by-field on top of the Agent default: any field unspecified here falls through to the Agent's `retry`, then to the built-in defaults. So `agent.run(input, { retry: { maxAttempts: 5 } })` uses 5 attempts and inherits `initialDelayMs`, `maxDelayMs`, `idleTimeoutMs`, and `isRetryable` from the Agent. |
-| `context` | `Record<string, unknown>` | no | `undefined` | Caller-supplied data bag propagated verbatim into every `ToolDeps.context` for this run. Useful for threading per-request state (user id, timezone, tenant, etc.) into tool implementations without the LLM ever seeing it. Never sent to the model. |
+| `context` | `Record<string, unknown>` | no | `undefined` | Caller-supplied data bag propagated verbatim into every `ToolDeps.context` for this run. Useful for threading per-request state (user id, timezone, tenant, etc.) into tool implementations without the LLM ever seeing it. Never sent to the model. When this agent invokes a subagent, the same `context` object is forwarded into the subagent's `runLoop` so tools at any depth of nesting observe the same value. |
 
 ---
 

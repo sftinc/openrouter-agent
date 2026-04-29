@@ -515,6 +515,68 @@ describe('Agent', () => {
 		expect(outerToolEnd?.display?.content).toBe('from-end')
 	})
 
+	test("subagent's tools see the parent's run context", async () => {
+		// Parent turn 1: call the subagent.
+		fetchSpy.mockResolvedValueOnce(
+			sseOfChunks(
+				mockCompletionChunks({
+					id: 'gen-1',
+					finish_reason: 'tool_calls',
+					tool_calls: [
+						{ id: 'tu_1', type: 'function', function: { name: 'child', arguments: '{"input":"go"}' } },
+					],
+					usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+				})
+			)
+		)
+		// Subagent turn 1: call the spy tool.
+		fetchSpy.mockResolvedValueOnce(
+			sseOfChunks(
+				mockCompletionChunks({
+					id: 'gen-2',
+					finish_reason: 'tool_calls',
+					tool_calls: [
+						{ id: 'tu_2', type: 'function', function: { name: 'spy', arguments: '{}' } },
+					],
+					usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+				})
+			)
+		)
+		// Subagent turn 2: finish.
+		fetchSpy.mockResolvedValueOnce(mockOkSse('subagent done'))
+		// Parent turn 2: finish.
+		fetchSpy.mockResolvedValueOnce(mockOkSse('parent done'))
+
+		let seenContext: unknown
+		const spyTool = new Tool({
+			name: 'spy',
+			description: 'captures deps.context',
+			inputSchema: z.object({}),
+			execute: async (_args, deps) => {
+				seenContext = deps.context
+				return 'ok'
+			},
+		})
+
+		const child = new Agent({
+			name: 'child',
+			description: 'subagent',
+			client: { model: 'anthropic/claude-haiku-4.5' },
+			tools: [spyTool],
+		})
+		const parent = new Agent({
+			name: 'parent',
+			description: 'orchestrator',
+			client: { model: 'anthropic/claude-haiku-4.5' },
+			tools: [child],
+		})
+
+		const ctx = { timezone: 'America/Los_Angeles', userId: 'u_42' }
+		await parent.run('plan my day', { context: ctx }).result
+
+		expect(seenContext).toEqual(ctx)
+	})
+
 	test('subagent non-message events still bubble to parent stream', async () => {
 		const innerTool = new Tool({
 			name: 'inner_tool',

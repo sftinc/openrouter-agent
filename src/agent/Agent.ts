@@ -353,7 +353,7 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
           await runLoop(
             this.buildConfig(deps.runId),
             inputStr,
-            { signal: deps.signal, parentRunId: deps.runId },
+            { signal: deps.signal, parentRunId: deps.runId, context: deps.context },
             (ev) => {
               // Subagents are tools from the parent's perspective. Their internal
               // message events are model-shaped reasoning artifacts addressed to
