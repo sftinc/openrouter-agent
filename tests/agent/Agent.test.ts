@@ -644,6 +644,81 @@ describe('Agent', () => {
 	})
 })
 
+describe("Agent — function-form systemPrompt", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch')
+    process.env.OPENROUTER_API_KEY = 'sk-test'
+  })
+
+  afterEach(() => {
+    fetchSpy.mockRestore()
+  })
+
+  test("Agent.systemPrompt function form renders against run context", async () => {
+    fetchSpy.mockResolvedValueOnce(mockOkSse('hello', 'gen-1'))
+
+    const agent = new Agent({
+      name: 'a',
+      description: 'd',
+      systemPrompt: (ctx) => `Timezone: ${(ctx?.timezone as string) ?? '?'}`,
+    })
+
+    await agent.run('hi', { context: { timezone: 'America/Los_Angeles' } })
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)
+    const sysMsg = (body.messages as { role: string; content: string }[]).find(
+      (m) => m.role === 'system'
+    )
+    expect(sysMsg?.content).toBe('Timezone: America/Los_Angeles')
+  })
+
+  test("subagent's function-form systemPrompt receives the parent's context", async () => {
+    // Turn 1: parent calls subagent tool
+    fetchSpy.mockResolvedValueOnce(
+      sseOfChunks(
+        mockCompletionChunks({
+          id: 'gen-1',
+          finish_reason: 'tool_calls',
+          tool_calls: [
+            {
+              id: 'c1',
+              type: 'function',
+              function: { name: 'child', arguments: JSON.stringify({ input: 'do it' }) },
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        })
+      )
+    )
+    // Turn 2: subagent's first (and only) LLM call
+    fetchSpy.mockResolvedValueOnce(mockOkSse('child-done', 'gen-2'))
+    // Turn 3: parent's final response
+    fetchSpy.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-3'))
+
+    const child = new Agent({
+      name: 'child',
+      description: 'a subagent',
+      systemPrompt: (ctx) => `tz=${(ctx?.timezone as string) ?? '?'}`,
+    })
+    const parent = new Agent({
+      name: 'parent',
+      description: 'the parent',
+      tools: [child],
+    })
+
+    await parent.run('plan', { context: { timezone: 'America/Los_Angeles' } })
+
+    // The second fetch call is the subagent's first (and only) LLM request
+    const subagentBody = JSON.parse(fetchSpy.mock.calls[1]![1]!.body as string)
+    const sysMsg = (subagentBody.messages as { role: string; content: string }[]).find(
+      (m) => m.role === 'system'
+    )
+    expect(sysMsg?.content).toBe('tz=America/Los_Angeles')
+  })
+})
+
 describe("Agent — retry config plumbing", () => {
   beforeEach(() => {
     process.env.OPENROUTER_API_KEY = 'sk-test';

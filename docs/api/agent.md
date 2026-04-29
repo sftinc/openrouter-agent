@@ -71,7 +71,7 @@ Source: `src/agent/Agent.ts:49-90`.
 | `name` | `string` | yes | — | Tool name surfaced to parent agents. Must be unique within a tool set. |
 | `description` | `string` | yes | — | Description surfaced to the LLM (and to humans) when this agent is used as a tool. |
 | `client` | `LLMConfig` | no | `{}` | Per-agent OpenRouter overrides (model, temperature, provider routing, `reasoning`, `response_format`, `tool_choice`, `plugins`, ...). Merged on top of the global client defaults at run time. |
-| `systemPrompt` | `string` | no | `undefined` | Default system prompt used for every run. Overridable per run via `AgentRunOptions.system`. |
+| `systemPrompt` | `string \| ((context: Record<string, unknown> \| undefined) => string)` | no | `undefined` | Default system prompt used for every run. Accepts a verbatim string or a function called with the run's `AgentRunOptions.context`; the function form is invoked once per LLM request so time-sensitive values (e.g. the user's local time) are re-evaluated each turn. Overridable per run via `AgentRunOptions.system`. |
 | `tools` | `Tool<any>[]` | no | `[]` | Tools the agent may call. May contain other `Agent` instances to enable subagents. |
 | `inputSchema` | `z.ZodType<Input>` | no | `z.object({ input: z.string() })` | Zod schema validating the tool-input shape **only when this agent is invoked as a tool by a parent**. Top-level callers pass `string \| Message[]` directly to `run()` and the schema is not consulted. |
 | `maxTurns` | `number` | no | `10` | Maximum LLM-call/tool-execution cycles per run before the loop terminates with `stopReason: "max_turns"`. |
@@ -181,7 +181,7 @@ Source: `src/agent/Agent.ts:107-114`. Defined as `Omit<RunLoopOptions, "parentRu
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `sessionId` | `string` | no | `undefined` | If set, the run resumes the conversation persisted under this id (loaded from `AgentConfig.sessionStore`) and writes back on a clean terminal stop reason. Holding the same `sessionId` while another run is in flight throws `SessionBusyError` synchronously. |
-| `system` | `string` | no | `undefined` | Override for the system prompt. Wins over both `AgentConfig.systemPrompt` and any embedded `system` message in `input` (`src/agent/loop.ts:425-434`). |
+| `system` | `string \| ((context: Record<string, unknown> \| undefined) => string)` | no | `undefined` | Override for the system prompt. Wins over both `AgentConfig.systemPrompt` and any embedded `system` message in `input`. Accepts a verbatim string or a function called with `AgentRunOptions.context`; invoked once per LLM request. (`src/agent/loop.ts:425-434`). |
 | `signal` | `AbortSignal` | no | `undefined` | Cancellation signal. When aborted, the loop terminates with `stopReason: "aborted"` and **skips session persistence** so the same `input` can be safely retried. |
 | `maxTurns` | `number` | no | `AgentConfig.maxTurns` (`10`) | Per-call override of the maximum LLM/tool turn count. |
 | `client` | `LLMConfig` | no | `undefined` | Per-call OpenRouter overrides; merged on top of `AgentConfig.client` (`src/agent/loop.ts:590-593`). |

@@ -1218,6 +1218,78 @@ describe("runLoop — retry behavior", () => {
   });
 });
 
+  test("runLoop calls function-form systemPrompt with options.context per request", async () => {
+    let callCount = 0;
+    const calls: Array<Record<string, unknown> | undefined> = [];
+
+    const tool = new Tool({
+      name: "echo",
+      description: "echo",
+      inputSchema: z.object({ text: z.string() }),
+      execute: async (args) => `ECHO:${args.text}`,
+    });
+
+    const client = {
+      completeStream: vi.fn()
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
+            id: "gen-1",
+            finish_reason: "tool_calls",
+            content: null,
+            tool_calls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: { name: "echo", arguments: JSON.stringify({ text: "hi" }) },
+              },
+            ],
+          }))
+        )
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({ id: "gen-2", content: "final" }))
+        ),
+    };
+
+    const cfg = mkConfig({
+      tools: [tool],
+      openrouter: client as any,
+      systemPrompt: (ctx) => {
+        callCount++;
+        calls.push(ctx);
+        return `tz=${(ctx?.timezone as string) ?? "?"} call=${callCount}`;
+      },
+    });
+
+    await runLoop(cfg, "hi", { context: { timezone: "UTC" } }, () => {});
+
+    expect(callCount).toBe(2);
+    expect(calls[0]).toEqual({ timezone: "UTC" });
+    expect(calls[1]).toEqual({ timezone: "UTC" });
+
+    const firstReqMessages = client.completeStream.mock.calls[0][0].messages as any[];
+    const sysMsg = firstReqMessages.find((m: any) => m.role === "system");
+    expect(sysMsg?.content).toBe("tz=UTC call=1");
+  });
+
+  test("runLoop's options.system function form wins over config.systemPrompt", async () => {
+    const client = {
+      completeStream: vi.fn().mockImplementation(() =>
+        mockStream(mockChunks({ content: "ok" }))
+      ),
+    };
+
+    const cfg = mkConfig({
+      openrouter: client as any,
+      systemPrompt: () => "from config",
+    });
+
+    await runLoop(cfg, "hi", { context: { user: "alice" }, system: (ctx) => `override for ${ctx?.user ?? "?"}` }, () => {});
+
+    const reqMessages = client.completeStream.mock.calls[0][0].messages as any[];
+    const sysMsg = reqMessages.find((m: any) => m.role === "system");
+    expect(sysMsg?.content).toBe("override for alice");
+  });
+
 describe("Result.messages trim", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 

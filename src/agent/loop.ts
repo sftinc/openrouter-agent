@@ -50,8 +50,16 @@ const FINISH_REASON_TO_STOP: Record<string, Result["stopReason"]> = {
 export interface RunLoopConfig {
   /** Agent name reported on `agent:start` events and used in default display titles. */
   agentName: string;
-  /** Default system prompt; overridable per-run via {@link RunLoopOptions.system}. */
-  systemPrompt?: string;
+  /**
+   * Default system prompt; overridable per-run via {@link RunLoopOptions.system}.
+   *
+   * Either a string (used verbatim) or a function called with the run's
+   * resolved {@link RunLoopOptions.context} that returns the system-prompt
+   * string. The function is invoked once per LLM request, so functions that
+   * embed time-sensitive values (e.g. the user's current local time) are
+   * re-evaluated on every turn.
+   */
+  systemPrompt?: string | ((context: Record<string, unknown> | undefined) => string);
   /** Base OpenRouter client overrides (model, temperature, provider routing, etc.). */
   client: LLMConfig;
   /** Registered tools. Empty array if the agent has no tools. */
@@ -105,8 +113,12 @@ export interface RunLoopOptions {
    * Override for the system prompt. Wins over both
    * {@link RunLoopConfig.systemPrompt} and any `system` message embedded in
    * an `input: Message[]`.
+   *
+   * Either a string (used verbatim) or a function called with the run's
+   * resolved {@link RunLoopOptions.context} that returns the system-prompt
+   * string. The function is invoked once per LLM request.
    */
-  system?: string;
+  system?: string | ((context: Record<string, unknown> | undefined) => string);
   /**
    * Optional cancellation signal. When aborted, the loop terminates with
    * `stopReason: "aborted"` and skips session persistence.
@@ -440,7 +452,9 @@ async function executeToolCall(
  * @param sessionMessages Persisted prior messages from the session store,
  *   or `null` if no session is in use.
  * @returns An object with three fields:
- *   - `system`: the resolved system prompt content (or `undefined` if none).
+ *   - `system`: the resolved system prompt value — either a `string`,
+ *     a `(ctx) => string` function (evaluated lazily by `wireMessages`
+ *     once per LLM request), or `undefined` if none.
  *   - `messages`: the ordered seed message array for the loop (no
  *     system-role messages — the system prompt is prepended only on the
  *     wire). Order is `[...sessionMessages (system-stripped), ...newInput
@@ -452,21 +466,28 @@ async function executeToolCall(
  */
 function resolveInitialMessages(
   input: string | Message[],
-  systemOverride: string | undefined,
-  systemFromConfig: string | undefined,
+  systemOverride: string | ((ctx: Record<string, unknown> | undefined) => string) | undefined,
+  systemFromConfig: string | ((ctx: Record<string, unknown> | undefined) => string) | undefined,
   sessionMessages: Message[] | null
-): { system: string | undefined; messages: Message[]; sessionCount: number } {
+): {
+  system: string | ((ctx: Record<string, unknown> | undefined) => string) | undefined;
+  messages: Message[];
+  sessionCount: number;
+} {
   const messages: Message[] = [];
 
-  let systemContent: string | undefined;
+  let systemValue:
+    | string
+    | ((ctx: Record<string, unknown> | undefined) => string)
+    | undefined;
   if (systemOverride !== undefined) {
-    systemContent = systemOverride;
+    systemValue = systemOverride;
   } else if (Array.isArray(input)) {
     const sys = input.find((m) => m.role === "system");
-    if (sys && typeof sys.content === "string") systemContent = sys.content;
-    else systemContent = systemFromConfig;
+    if (sys && typeof sys.content === "string") systemValue = sys.content;
+    else systemValue = systemFromConfig;
   } else {
-    systemContent = systemFromConfig;
+    systemValue = systemFromConfig;
   }
 
   let sessionCount = 0;
@@ -488,7 +509,7 @@ function resolveInitialMessages(
     messages.push({ role: "user", content: input });
   }
 
-  return { system: systemContent, messages, sessionCount };
+  return { system: systemValue, messages, sessionCount };
 }
 
 /**
@@ -657,10 +678,13 @@ export async function runLoop(
     sessionMessages
   );
 
-  const wireMessages = (): Message[] =>
-    typeof systemContent === "string"
-      ? [{ role: "system", content: systemContent }, ...messages]
+  const wireMessages = (): Message[] => {
+    const sys =
+      typeof systemContent === "function" ? systemContent(options.context) : systemContent;
+    return typeof sys === "string"
+      ? [{ role: "system", content: sys }, ...messages]
       : messages;
+  };
 
   const toolByName = new Map<string, Tool>();
   for (const t of config.tools) toolByName.set(t.name, t);

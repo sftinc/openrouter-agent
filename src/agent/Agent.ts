@@ -60,9 +60,32 @@ export interface AgentConfig<Input> {
   client?: LLMConfig;
   /**
    * System prompt used for every run unless explicitly overridden via
-   * {@link RunLoopOptions.system}.
+   * {@link AgentRunOptions.system}.
+   *
+   * Either a string (used verbatim) or a function called with the run's
+   * {@link AgentRunOptions.context} that returns the system-prompt string.
+   * The function is invoked once per LLM request, so values that depend on
+   * "current time" or other turn-fresh inputs are re-evaluated each turn.
+   *
+   * @example
+   * ```ts
+   * import { Agent } from "./agent";
+   *
+   * const agent = new Agent({
+   *   model: "anthropic/claude-sonnet-4-6",
+   *   systemPrompt: (ctx) => {
+   *     const tz = (ctx?.timezone as string) ?? "UTC";
+   *     const now = new Intl.DateTimeFormat("en-US", {
+   *       timeZone: tz, dateStyle: "full", timeStyle: "long",
+   *     }).format(new Date());
+   *     return `You are an assistant. Local time: ${now} (${tz}).`;
+   *   },
+   * });
+   * ```
    */
-  systemPrompt?: string;
+  systemPrompt?:
+    | string
+    | ((context: Record<string, unknown> | undefined) => string);
   /**
    * Tools the agent may call. May contain other `Agent` instances to enable
    * subagents. Defaults to `[]` (no tools).
@@ -247,7 +270,9 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
   /** Per-agent OpenRouter overrides; merged with run-time `options.client` for each request. */
   private readonly clientOverrides: LLMConfig;
   /** Default system prompt for every run; can be overridden per-run via `options.system`. */
-  private readonly systemPrompt?: string;
+  private readonly systemPrompt?:
+    | string
+    | ((context: Record<string, unknown> | undefined) => string);
   /** Tool set this agent exposes to the LLM. May include other `Agent` instances (subagents). */
   private readonly agentTools: Tool<any>[];
   /** Maximum LLM/tool turns per run before forced termination. Defaults to `10`. */
