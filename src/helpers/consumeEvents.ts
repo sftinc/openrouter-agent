@@ -24,6 +24,14 @@ export interface AgentEventHandlers {
   onAgentEnd?: (e: Extract<AgentEvent, { type: "agent:end" }>) => void | Promise<void>;
   /** Called once per assistant message (including tool-call messages). */
   onMessage?: (e: Extract<AgentEvent, { type: "message" }>) => void | Promise<void>;
+  /**
+   * Called once per turn whose assembled assistant message has `tool_calls`.
+   * Same payload shape as the terminal `onMessage` event. Followed by the
+   * corresponding `onToolStart` / `onToolEnd` pairs.
+   */
+  onMessagePreamble?: (
+    e: Extract<AgentEvent, { type: "message:preamble" }>,
+  ) => void | Promise<void>;
   /** Called for each streamed text delta from the assistant. */
   onMessageDelta?: (e: Extract<AgentEvent, { type: "message:delta" }>) => void | Promise<void>;
   /** Called once when a tool invocation begins. */
@@ -86,6 +94,9 @@ export async function consumeAgentEvents(
         break;
       case "message":
         if (handlers.onMessage) await handlers.onMessage(event);
+        break;
+      case "message:preamble":
+        if (handlers.onMessagePreamble) await handlers.onMessagePreamble(event);
         break;
       case "message:delta":
         if (handlers.onMessageDelta) await handlers.onMessageDelta(event);

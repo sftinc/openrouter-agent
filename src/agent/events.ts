@@ -95,7 +95,7 @@ export interface AgentDisplayHooks {
  * `Agent.run()` and display hooks. Discriminate on `event.type`.
  *
  * **Lifecycle order** (per run):
- *   `agent:start` → ((`retry*` | `message:delta*` + `message`) | `tool:start` + `tool:progress*` + `tool:end`)* → (`error`)? → `agent:end`
+ *   `agent:start` → ((`retry*` | `message:delta*` + (`message:preamble` | `message`)) | `tool:start` + `tool:progress*` + `tool:end`)* → (`error`)? → `agent:end`
  *
  * **Events:**
  * - `agent:start` — fires once, immediately after the runId is assigned,
@@ -104,9 +104,15 @@ export interface AgentDisplayHooks {
  *   tokens arrive from the streaming transport. Each delta carries only the
  *   new text since the previous delta, not the accumulated buffer. Does not
  *   fire for tool-call arg deltas (those are only exposed via the final
- *   `message` event's `tool_calls`).
- * - `message` — fires once per assistant message (including tool-call
- *   messages). Does NOT fire for user or tool-role messages.
+ *   `message` / `message:preamble` event's `tool_calls`).
+ * - `message:preamble` — fires once per turn whose assembled assistant
+ *   message has `tool_calls`. Same payload shape as `message`. Followed by
+ *   the corresponding `tool:start` / `tool:end` pairs. Semantically: the
+ *   model narrating its plan before invoking tools — not a user-facing
+ *   reply.
+ * - `message` — fires at most once per run, on the turn whose assembled
+ *   assistant message has no `tool_calls` (the final answer). Does NOT fire
+ *   for user or tool-role messages.
  * - `tool:start` — fires when a tool invocation begins. `input` is the
  *   parsed JSON args (best-effort; `{}` on parse failure).
  * - `tool:progress` — only fires if a tool emits one manually via
@@ -168,6 +174,16 @@ export type AgentEvent =
   | {
       /** Discriminator: a complete assistant message (possibly with `tool_calls`). */
       type: "message";
+      /** Run id this message belongs to. */
+      runId: string;
+      /** The full assistant {@link Message} as it was appended to the conversation. */
+      message: Message;
+      /** Reserved for future per-message display rendering; currently unused by the loop. */
+      display?: EventDisplay;
+    }
+  | {
+      /** Discriminator: an intermediate assistant message that carries `tool_calls`. */
+      type: "message:preamble";
       /** Run id this message belongs to. */
       runId: string;
       /** The full assistant {@link Message} as it was appended to the conversation. */
@@ -320,6 +336,8 @@ export function defaultDisplay(event: AgentEvent): EventDisplay {
       return { title: "Message delta" };
     case "message":
       return { title: "Message" };
+    case "message:preamble":
+      return { title: "Preamble" };
     case "tool:start":
       return { title: `Running ${event.toolName}` };
     case "tool:progress":

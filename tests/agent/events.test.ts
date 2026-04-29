@@ -93,6 +93,15 @@ describe("defaultDisplay", () => {
     expect(defaultDisplay(ev).title).toBe("Error");
     expect(defaultDisplay(ev).content).toBe("rate limited");
   });
+
+  test("message:preamble has a default title", () => {
+    const ev: AgentEvent = {
+      type: "message:preamble",
+      runId: "r1",
+      message: { role: "assistant", content: "I'll look that up.", tool_calls: [] },
+    };
+    expect(defaultDisplay(ev).title).toBe("Preamble");
+  });
 });
 
 describe("defaultDisplay — retry variant", () => {
