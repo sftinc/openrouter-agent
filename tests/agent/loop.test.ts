@@ -1218,6 +1218,7 @@ describe("runLoop — retry behavior", () => {
   });
 });
 
+describe("runLoop — function-form systemPrompt", () => {
   test("runLoop calls function-form systemPrompt with options.context per request", async () => {
     let callCount = 0;
     const calls: Array<Record<string, unknown> | undefined> = [];
@@ -1289,6 +1290,7 @@ describe("runLoop — retry behavior", () => {
     const sysMsg = reqMessages.find((m: any) => m.role === "system");
     expect(sysMsg?.content).toBe("override for alice");
   });
+});
 
 describe("Result.messages trim", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
