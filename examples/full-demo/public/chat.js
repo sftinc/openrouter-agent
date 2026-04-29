@@ -176,7 +176,6 @@ async function runRequest(message) {
   const phaseById = new Map();
   let assistantEl = null;
   let assistantBuf = "";
-  let renderedAssistant = false;
   let errorShown = false;
   // The top-level run's id, captured from the first `agent:start` without
   // `parentRunId`. Used to ignore `agent:end` for bubbled subagent runs —
@@ -342,7 +341,6 @@ async function runRequest(message) {
         if (text.length > 0 && event.message?.role === "assistant") {
           if (!assistantEl) assistantEl = addAssistantMessage();
           renderMarkdown(assistantEl, text);
-          renderedAssistant = true;
           scroll();
         }
         assistantEl = null;
@@ -378,16 +376,10 @@ async function runRequest(message) {
           showError(event.result.error.message);
         } else if (event.result?.stopReason === "aborted") {
           showError("request was aborted before it finished");
-        } else if (
-          !renderedAssistant &&
-          typeof event.result?.text === "string" &&
-          event.result.text.length > 0
-        ) {
-          const el = addAssistantMessage();
-          renderMarkdown(el, event.result.text);
-          renderedAssistant = true;
-          scroll();
         }
+        // The chat bubble is rendered by the `message` event above. agent:end
+        // is concerned only with activity-card finalization and run-level
+        // error/abort UI; it never paints assistant text.
         break;
       }
       case "error": {
