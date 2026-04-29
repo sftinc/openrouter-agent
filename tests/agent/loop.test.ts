@@ -820,6 +820,44 @@ describe("runLoop", () => {
     }
   });
 
+  test("runLoop forwards options.context to ToolDeps.context", async () => {
+    let seenContext: unknown;
+    const spyTool = new Tool({
+      name: "spy",
+      description: "captures deps.context",
+      inputSchema: z.object({}),
+      execute: async (_args, deps) => {
+        seenContext = deps.context;
+        return "ok";
+      },
+    });
+
+    const client = {
+      completeStream: vi.fn()
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
+            finish_reason: "tool_calls",
+            content: null,
+            tool_calls: [
+              { id: "tu_1", type: "function", function: { name: "spy", arguments: "{}" } },
+            ],
+          }))
+        )
+        .mockImplementationOnce(() => mockStream(mockChunks({ content: "done" }))),
+    };
+
+    const config = mkConfig({ tools: [spyTool], openrouter: client as any });
+
+    await runLoop(
+      config,
+      "hi",
+      { context: { timezone: "America/Los_Angeles", userId: "u_42" } },
+      () => {}
+    );
+
+    expect(seenContext).toEqual({ timezone: "America/Los_Angeles", userId: "u_42" });
+  });
+
   test("tool:end on error carries timing fields", async () => {
     const events: AgentEvent[] = [];
     const tool = new Tool({

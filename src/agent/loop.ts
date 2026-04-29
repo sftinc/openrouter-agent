@@ -123,6 +123,14 @@ export interface RunLoopOptions {
    * {@link RunLoopConfig.retry}, then on top of `DEFAULT_RETRY_CONFIG`.
    */
   retry?: RetryConfig;
+  /**
+   * Caller-supplied data made available to tools (via
+   * {@link ToolDeps.context}) and to the function form of
+   * {@link RunLoopConfig.systemPrompt} / {@link RunLoopOptions.system}.
+   * Propagated verbatim into every subagent invocation. Never sent to the
+   * LLM. Must be a plain object when set.
+   */
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -698,6 +706,7 @@ export async function runLoop(
     runId,
     parentRunId,
     getMessages: () => messages.slice(),
+    context: options.context,
   };
 
   // Resolve retry config once for the whole run; per-turn budgets are

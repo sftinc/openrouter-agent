@@ -129,4 +129,35 @@ export interface ToolDeps {
    * @returns A defensive copy of the conversation visible to this tool call.
    */
   getMessages?: () => Message[];
+  /**
+   * Caller-supplied data for the current run, made available to tools and
+   * propagated verbatim into every subagent invocation. Set once at the
+   * top-level {@link Agent.run} call via {@link AgentRunOptions.context};
+   * never seen by the LLM.
+   *
+   * Treat as read-only: mutating this object does not affect subagents or
+   * sibling tool calls, and the framework reserves the right to freeze it
+   * in a future release. `undefined` when the caller did not supply one.
+   *
+   * @example
+   * ```ts
+   * import { Tool } from "./tool";
+   * import { z } from "zod";
+   *
+   * const calendar = new Tool({
+   *   name: "search_calendar",
+   *   description: "Find events on the user's calendar.",
+   *   inputSchema: z.object({ query: z.string() }),
+   *   execute: async ({ query }, deps) => {
+   *     const ctx = deps.context ?? {};
+   *     return await calendarApi.search({
+   *       userId: ctx.userId as string,
+   *       timezone: (ctx.timezone as string) ?? "UTC",
+   *       query,
+   *     });
+   *   },
+   * });
+   * ```
+   */
+  context?: Record<string, unknown>;
 }
