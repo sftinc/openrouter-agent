@@ -642,6 +642,82 @@ describe('Agent', () => {
 		expect(childEvents).not.toContain('message')
 		expect(childEvents).not.toContain('message:delta')
 	})
+
+	test('subagent message:preamble events are not bubbled to the parent stream', async () => {
+		fetchSpy
+			// Outer turn 1: assistant calls the child subagent.
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-1',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 'c1',
+								type: 'function',
+								function: { name: 'child', arguments: JSON.stringify({ input: 'topic' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			// Child turn 1: subagent itself emits a preamble + tool call. We use an
+			// echoing inner tool so the child has a tool to call, so its first turn
+			// produces a `message:preamble` (assistant text + tool_calls).
+			.mockResolvedValueOnce(
+				sseOfChunks(
+					mockCompletionChunks({
+						id: 'gen-2',
+						content: 'thinking inside the child',
+						finish_reason: 'tool_calls',
+						tool_calls: [
+							{
+								id: 'c2',
+								type: 'function',
+								function: { name: 'inner_echo', arguments: JSON.stringify({ text: 'x' }) },
+							},
+						],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					})
+				)
+			)
+			// Child turn 2: subagent finishes.
+			.mockResolvedValueOnce(mockOkSse('child-final', 'gen-3'))
+			// Outer turn 2: parent finishes.
+			.mockResolvedValueOnce(mockOkSse('parent-final', 'gen-4'))
+
+		const innerEcho = new Tool({
+			name: 'inner_echo',
+			description: 'echo',
+			inputSchema: z.object({ text: z.string() }),
+			execute: async ({ text }) => text,
+		})
+
+		const child = new Agent({ name: 'child', description: 'sub', tools: [innerEcho] })
+		const parent = new Agent({ name: 'parent', description: 'p', tools: [child] })
+
+		let childRunId: string | undefined
+		const childEventTypes: string[] = []
+
+		for await (const ev of parent.run('go')) {
+			if (ev.type === 'agent:start' && ev.parentRunId) childRunId = ev.runId
+			if (childRunId && ev.runId === childRunId) childEventTypes.push(ev.type)
+		}
+
+		// The child's `message:preamble` must not be bubbled into the parent
+		// stream. Bubbled child events keep their own runId, so the absence of
+		// `message:preamble` from the events iterated under `childRunId` proves
+		// the filter blocks all `message*` from reaching the parent. (The
+		// child's own AgentRun would still see it.) The parent's own loop may
+		// emit its own `message:preamble` for the turn that calls the child;
+		// that's a parent-stream event with the parent's runId and not what
+		// this filter governs.
+		expect(childEventTypes).not.toContain('message:preamble')
+		// Sanity: the child's other lifecycle events DO bubble through.
+		expect(childEventTypes).toContain('agent:start')
+		expect(childEventTypes).toContain('agent:end')
+	})
 })
 
 describe("Agent — function-form systemPrompt", () => {

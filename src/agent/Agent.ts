@@ -302,9 +302,10 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
    * Construct an agent. Also wires up the underlying `Tool` superclass so
    * that invoking this agent as a tool from a parent runs a nested
    * {@link runLoop}, forwarding child events into the parent's stream via
-   * `deps.emit` — except `message` and `message:delta`, which remain on
-   * the inner `AgentRun` only so subagent reasoning artifacts don't
-   * pollute the parent's chat-bubble path.
+   * `deps.emit` — except any `message*` event (currently `message`,
+   * `message:delta`, and `message:preamble`), which remains on the inner
+   * `AgentRun` only so subagent reasoning artifacts don't pollute the
+   * parent's chat-bubble path.
    *
    * @param config The agent configuration. See {@link AgentConfig}.
    */
@@ -387,12 +388,14 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
             inputStr,
             { signal: deps.signal, parentRunId: deps.runId, context: deps.context },
             (ev) => {
-              // Subagents are tools from the parent's perspective. Their internal
-              // message events are model-shaped reasoning artifacts addressed to
-              // the parent loop, not the end user, and should not pollute the
+              // Subagents are tools from the parent's perspective. Any
+              // `message*` event (the model's text-stream reasoning artifacts:
+              // `message:delta`, `message:preamble`, `message`) addresses the
+              // parent loop, not the end user, and should not pollute the
               // parent's NDJSON stream. Keep them on the inner AgentRun (via
-              // emit) for inspector/devtools access.
-              if (ev.type !== "message" && ev.type !== "message:delta") {
+              // emit) for inspector/devtools access. Everything else
+              // (`agent:*`, `tool:*`, `retry`, `error`) bubbles up.
+              if (!ev.type.startsWith("message")) {
                 parentEmit?.(ev);
               }
               emit(ev);
