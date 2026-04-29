@@ -98,7 +98,12 @@ function renderTimeline(card, phases) {
     phases
       .map((p) => {
         const mark = p.error ? "✗" : p.done ? "✓" : "…";
-        return `${mark} ${p.title}`;
+        const seconds =
+          typeof p.elapsedMs === "number" && p.elapsedMs > 0
+            ? Math.max(1, Math.round(p.elapsedMs / 1000))
+            : null;
+        const suffix = seconds === null ? "" : ` (${seconds}s)`;
+        return `${mark} ${p.title}${suffix}`;
       })
       .join("\n"),
   );
@@ -294,6 +299,11 @@ async function runRequest(message) {
         if (d?.content !== undefined) phase.content = d.content;
         phase.done = true;
         phase.error = hasError;
+        // For a subagent invoked as a tool, `elapsedMs` here equals the
+        // subagent's run duration (modulo wrapper microseconds), so the
+        // timeline can show how long each step — including a subagent —
+        // took without separately consuming the subagent's `agent:end`.
+        if (typeof event.elapsedMs === "number") phase.elapsedMs = event.elapsedMs;
         setActivityTitle(activityCard, phase.title);
         setActivityContent(activityCard, phase.content);
         break;
