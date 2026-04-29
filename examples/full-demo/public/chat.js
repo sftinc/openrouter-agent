@@ -178,6 +178,11 @@ async function runRequest(message) {
   let assistantBuf = "";
   let renderedAssistant = false;
   let errorShown = false;
+  // The top-level run's id, captured from the first `agent:start` without
+  // `parentRunId`. Used to ignore `agent:end` for bubbled subagent runs —
+  // those would otherwise overwrite the activity card and trigger the
+  // result-text fallback bubble using the subagent's output.
+  let topRunId = null;
 
   const showError = (msg) => {
     if (errorShown) return;
@@ -239,6 +244,12 @@ async function runRequest(message) {
     }
     switch (event.type) {
       case "agent:start": {
+        // Capture the top-level run id once. Subagent `agent:start` events
+        // (which carry `parentRunId`) bubble through too, but we want the
+        // top-level run's id for gating `agent:end` below.
+        if (!event.parentRunId && topRunId === null) {
+          topRunId = event.runId;
+        }
         // Open the per-turn activity card up front so the user sees an
         // immediate "Thinking" indicator while we wait for the first model
         // response. Tool events below replace the title/content live; the
@@ -339,6 +350,12 @@ async function runRequest(message) {
         break;
       }
       case "agent:end": {
+        // Subagent `agent:end` events bubble up to the parent stream. Skip
+        // them — they would otherwise overwrite the activity card title with
+        // the subagent's elapsed time and (when no parent message has
+        // rendered yet) trigger the fallback below using the subagent's
+        // `result.text`, producing a duplicate chat bubble.
+        if (event.runId !== topRunId) break;
         // Replace the live title/content with the final state. The title
         // always reports the elapsed time so the user sees how long the
         // turn took, with or without tool calls. When tools ran, the
