@@ -42,6 +42,45 @@ Additional rules:
 
 - Mark deprecated APIs with `@deprecated` and point to the replacement.
 - Mark unstable APIs with `@experimental` (or a clearly worded note) so consumers know the contract may change.
-- Prefer concrete types in prose over restating the TypeScript signature — explain *why* and *when*, not just *what*.
+- Prefer concrete types in prose over restating the TypeScript signature — explain _why_ and _when_, not just _what_.
 - Document defaults in the JSDoc even when they are also expressed in code; callers reading hover docs should not need to open the source.
 - Keep examples runnable and minimal. If an example needs setup, show it.
+
+# Git Rules
+
+When committing, ensure all changed and untracked files are staged and included in the commit.
+
+## Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <subject>`. The `type` drives how the change is grouped in the changelog and what kind of version bump it triggers:
+
+- `feat` → **Added** (minor bump)
+- `fix` → **Fixed** (patch bump)
+- `perf`, `refactor`, `style`, `revert` → **Changed** (patch bump)
+- `docs`, `chore`, `test`, `build`, `ci` → hidden from the changelog (no release-worthy impact on their own)
+
+Breaking changes: add a `!` after the type (`feat!: ...`) or a `BREAKING CHANGE:` footer — this triggers a major bump.
+
+## Releasing
+
+Versioning and `CHANGELOG.md` are automated by [`commit-and-tag-version`](https://github.com/absolute-version/commit-and-tag-version). Do **not** hand-edit `package.json` version or `CHANGELOG.md` — they are generated from commit history.
+
+To cut a release:
+
+```bash
+npm run release            # auto-detects bump from commits since last tag
+npm run release:minor      # or force minor
+npm run release:patch      # or force patch
+git push --follow-tags     # push commits + the new version tag
+```
+
+The release command bumps `package.json`, prepends a new section to `CHANGELOG.md`, creates a `chore(release): X.Y.Z` commit, and tags it `vX.Y.Z`.
+
+## "Push" always means release-then-push
+
+When the user asks to push, run the release flow — never a bare `git push`:
+
+1. Check `git log <last-vX.Y.Z-tag>..HEAD` for commits since the last version tag.
+2. If any of those commits are release-worthy types (`feat`, `fix`, `perf`, `refactor`, `style`, `revert`) → run `npm run release`, then `git push --follow-tags`.
+3. If the only unreleased commits are hidden types (`docs`, `chore`, `test`, `build`, `ci`) or there are no new commits → just `git push` (no new version to cut).
+4. If the user explicitly says "push without releasing" (or equivalent), honor that and run a bare `git push`.
