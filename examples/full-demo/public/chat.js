@@ -393,6 +393,12 @@ async function runRequest(message) {
         break;
       }
       case "error": {
+        // A subagent's `error` event also bubbles to the parent stream. If
+        // the parent gracefully recovered from the subagent's failure, we
+        // don't want to show a Retry banner — the activity timeline's ✗
+        // mark on the failed phase already conveys what went wrong. Only
+        // surface errors from the top-level run.
+        if (event.runId !== topRunId) break;
         showError(event.error?.message ?? "unknown error");
         break;
       }
