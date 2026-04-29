@@ -31,7 +31,7 @@ Within the package, the folder index re-exports everything (`src/agent/index.ts:
 | --- | --- | --- |
 | `Agent` | class | `src/agent/Agent.ts:138` |
 | `AgentConfig` | interface | `src/agent/Agent.ts:49` |
-| `AgentRunOptions` | type alias | `src/agent/Agent.ts:107` |
+| `AgentRunOptions` | type alias | `src/agent/Agent.ts:196` |
 | `AgentRun` | class | `src/agent/AgentRun.ts:28` |
 | `runLoop` | function | `src/agent/loop.ts:579` |
 | `RunLoopConfig` | interface | `src/agent/loop.ts:42` |
@@ -136,7 +136,7 @@ The single run entry point. **There is no separate `runStream` method** — the 
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `input` | `string \| Message[]` | yes | A user prompt string (appended as a `user`-role message) **or** a full `Message[]` to seed the conversation. When an array is passed, an embedded `system` message overrides `AgentConfig.systemPrompt`, but `options.system` still wins over both (`src/agent/loop.ts:417-452`). |
+| `input` | `string \| Message[]` | yes | A user prompt string (appended as a `user`-role message) **or** a full `Message[]` to seed the conversation. When an array is passed, an embedded `system` message overrides `AgentConfig.systemPrompt`, but `options.system` still wins over both (`src/agent/loop.ts:467-513`). |
 | `options` | `AgentRunOptions` | no (defaults to `{}`) | Per-run overrides. See [`AgentRunOptions`](#agentrunoptions). |
 
 **Returns:** `AgentRun` — see [`AgentRun`](#agentrun).
@@ -176,7 +176,7 @@ const final = await run.result;
 
 ### `AgentRunOptions`
 
-Source: `src/agent/Agent.ts:107-114`. Defined as `Omit<RunLoopOptions, "parentRunId"> & { parentRunId?: string }`, so the full shape is the union of the loop-level fields plus `parentRunId`.
+Source: `src/agent/Agent.ts:196-203`. Defined as `Omit<RunLoopOptions, "parentRunId"> & { parentRunId?: string }`, so the full shape is the union of the loop-level fields plus `parentRunId`.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -565,6 +565,6 @@ The following are not exported from the package but document the loop's behavior
 | `pickAgentEndHook(display, result)` | `src/agent/loop.ts:283-290` | Implements the `agent:end` hook routing table. |
 | `executeToolCall(toolCall, toolByName, deps, runId, emit)` | `src/agent/loop.ts:312-396` | Single-tool dispatcher: validates args, calls `Tool.execute`, normalizes the result, emits `tool:start` / `tool:end`, returns the `role: "tool"` `Message` to append. Logs to stderr when `OPENROUTER_DEBUG` env var is set. |
 | `resolveInitialMessages(input, systemOverride, systemFromConfig, sessionMessages)` | `src/agent/loop.ts:467-513` | Builds the seed `messages` array and resolves the system prompt with `systemOverride` > embedded `system` > `systemFromConfig` precedence. Strips `system`-role messages from both session history and seed input. |
-| `lastAssistantText(messages)` | `src/agent/loop.ts:462-470` | Walks messages backwards and returns the most recent `assistant` message with string content. Returns `""` if none exist (empty `Result.text` on tool-only final turns). |
+| `lastAssistantText(messages)` | `src/agent/loop.ts:523-531` | Walks messages backwards and returns the most recent `assistant` message with string content. Returns `""` if none exist (empty `Result.text` on tool-only final turns). |
 | `mergeToolCallDelta(buf, delta)` | `src/agent/loop.ts:484-512` | Reassembles streamed tool-call fragments keyed by `index`; concatenates argument fragments, first-seen `id`/`type`/`name` win. |
 | `assembleToolCalls(buf)` | `src/agent/loop.ts:527-542` | Flattens the per-index buffer into an ordered `ToolCall[]`. Defaults missing fields so the structure always type-checks. |
