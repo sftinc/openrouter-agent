@@ -261,7 +261,7 @@ Every event carries a `runId: string`. Subagent-emitted events additionally carr
 
 ```
 agent:start
-  → ((retry* | message:delta* + message) | tool:start + tool:progress* + tool:end)*
+  → ((retry* | message:delta* + (message:preamble | message)) | tool:start + tool:progress* + tool:end)*
   → error?
   → agent:end
 ```
@@ -306,15 +306,26 @@ Source: `src/agent/events.ts:138-147`. Fires zero or more times per assistant tu
 | `text` | `string` | Newly arrived text since the previous delta. |
 | `display` | `EventDisplay \| undefined` | Optional display payload (the loop itself does not populate this). |
 
+### `message:preamble`
+
+Source: `src/agent/events.ts` (`message:preamble` variant). Fires once per turn whose assembled assistant message has `tool_calls`. Same payload shape as `message`. Followed by `tool:start` / `tool:end` for each tool call. Semantically the model narrating a plan before invoking tools — not a user-facing reply, and not the run's final output. Subagent `message:preamble` events do **not** bubble up to the parent stream (see [subagent event bubbling](#subagent-event-bubbling)).
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `type` | `"message:preamble"` | Discriminator. |
+| `runId` | `string` | Run id this message belongs to. |
+| `message` | `Message` | The full assistant `Message` (`role: "assistant"`) as appended to the conversation. `tool_calls` is always non-empty. |
+| `display` | `EventDisplay \| undefined` | Reserved for future per-message display rendering; currently unused by the loop. |
+
 ### `message`
 
-Source: `src/agent/events.ts:148-157`. Fires once per assistant message (including assistant messages whose only content is `tool_calls`). Does **not** fire for `user`- or `tool`-role messages (`src/agent/loop.ts:737`).
+Source: `src/agent/events.ts` (`message` variant). Fires **at most once per run**, on the final turn whose assembled assistant message has no `tool_calls` (the run's final answer). Tool-call turns fire [`message:preamble`](#messagepreamble) instead. Does not fire for `user`- or `tool`-role messages.
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `type` | `"message"` | Discriminator. |
 | `runId` | `string` | Run id this message belongs to. |
-| `message` | `Message` | The full assistant `Message` (`role: "assistant"`) as appended to the conversation, including `content` (string or `null`) and `tool_calls?`. |
+| `message` | `Message` | The full assistant `Message` (`role: "assistant"`) as appended to the conversation. `tool_calls` is always undefined for this event. |
 | `display` | `EventDisplay \| undefined` | Reserved for future per-message display rendering; currently unused by the loop. |
 
 ### `tool:start`
@@ -529,7 +540,7 @@ Tool-call deltas, `turnUsage`, `contentBuf`, `toolCallBuf`, `finishReason`, and 
 
 When an `Agent` is invoked as a tool, the wrapper `execute` (`src/agent/Agent.ts:175-203`) creates an internal `AgentRun` whose `emit` forwards every event to **both** the parent's `deps.emit` and the inner handle. The result is that a single outer event stream contains interleaved events from arbitrarily nested subagent runs. Each `agent:start` carries `parentRunId` (set from `deps.runId` at the wrapper boundary); each `agent:end` carries the matching `runId`. Top-level consumers must filter by `runId` to identify a specific run's terminal event — `AgentRun` does this internally so `await run` always resolves to the *outer* run's `Result`.
 
-**Subagent message events do not bubble.** When an Agent runs as a subagent, its inner `message` and `message:delta` events stay on the subagent's own `AgentRun` and are **not** forwarded to the parent's NDJSON stream. Semantically a subagent is a tool from the parent's perspective; its internal "assistant said X" reasoning addresses the parent loop, not the end user, so it would only confuse a chat UI to render it as an assistant bubble. All other inner events (`agent:start`, `agent:end`, `tool:start`, `tool:progress`, `tool:end`, `retry`, `error`) bubble upward unchanged for full observability of subagent activity.
+**Subagent message events do not bubble.** When an Agent runs as a subagent, every `message*` event it emits (`message:delta`, `message:preamble`, `message`) stays on the subagent's own `AgentRun` and is **not** forwarded to the parent's NDJSON stream. Semantically a subagent is a tool from the parent's perspective; its internal "assistant said X" reasoning addresses the parent loop, not the end user, so it would only confuse a chat UI to render it as an assistant bubble. All other inner events (`agent:start`, `agent:end`, `tool:start`, `tool:progress`, `tool:end`, `retry`, `error`) bubble upward unchanged for full observability of subagent activity.
 
 ### Error handling summary
 
