@@ -238,10 +238,10 @@ const researcher = new Agent({
 			content: typeof input === 'string' ? input : 'Starting research session',
 		}),
 		success: (result) => {
-			const turns = result.messages.filter((m) => m.role === 'assistant').length
+			const searches = result.messages.flatMap((m) => m.tool_calls ?? []).length
 			const tokens = result.usage.total_tokens ?? 0
 			return {
-				title: `Research complete — ${turns} turn${turns === 1 ? '' : 's'}`,
+				title: `Research complete — ${searches} search${searches === 1 ? '' : 'es'}`,
 				content: `Used ${tokens.toLocaleString()} tokens. Returning briefing to orchestrator.`,
 			}
 		},
