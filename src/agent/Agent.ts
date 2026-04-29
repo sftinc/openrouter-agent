@@ -185,6 +185,13 @@ export interface AgentConfig<Input> {
  *   signal: controller.signal,
  * });
  * ```
+ *
+ * The `context` field (inherited from {@link RunLoopOptions}) carries
+ * caller-supplied data into every tool and subagent of the run. It is
+ * never sent to the LLM. The function form of {@link AgentConfig.systemPrompt}
+ * (or this object's `system`) receives it as its argument, which lets
+ * subagent system prompts render against caller-supplied data such as the
+ * user's timezone. See {@link RunLoopOptions.context}.
  */
 export type AgentRunOptions = Omit<RunLoopOptions, "parentRunId"> & {
   /**

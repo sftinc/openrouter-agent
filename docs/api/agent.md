@@ -189,6 +189,50 @@ Source: `src/agent/Agent.ts:107-114`. Defined as `Omit<RunLoopOptions, "parentRu
 | `retry` | `RetryConfig` | no | inherits `AgentConfig.retry` | Per-call retry override. Merged field-by-field on top of the Agent default: any field unspecified here falls through to the Agent's `retry`, then to the built-in defaults. So `agent.run(input, { retry: { maxAttempts: 5 } })` uses 5 attempts and inherits `initialDelayMs`, `maxDelayMs`, `idleTimeoutMs`, and `isRetryable` from the Agent. |
 | `context` | `Record<string, unknown>` | no | `undefined` | Caller-supplied data bag propagated verbatim into every `ToolDeps.context` for this run. Useful for threading per-request state (user id, timezone, tenant, etc.) into tool implementations without the LLM ever seeing it. Never sent to the model. When this agent invokes a subagent, the same `context` object is forwarded into the subagent's `runLoop` so tools at any depth of nesting observe the same value. |
 
+### Context and dynamic system prompts
+
+`agent.run()` accepts an optional `context` object that flows verbatim through every tool and subagent in the call tree. It is never sent to the LLM.
+
+```ts
+await agent.run("plan my day", {
+  context: { timezone: "America/Los_Angeles", userId: "u_42" }
+});
+```
+
+Tools read it via `deps.context`:
+
+```ts
+new Tool({
+  name: "search_calendar",
+  description: "...",
+  inputSchema: z.object({ query: z.string() }),
+  execute: async ({ query }, deps) => {
+    const ctx = deps.context ?? {};
+    return calendarApi.search({
+      userId: ctx.userId as string,
+      timezone: (ctx.timezone as string) ?? "UTC",
+      query,
+    });
+  },
+});
+```
+
+`systemPrompt` and the per-run `system` override accept a function that receives the same `context` and returns the rendered string:
+
+```ts
+new Agent({
+  systemPrompt: (ctx) => {
+    const tz = (ctx?.timezone as string) ?? "UTC";
+    const now = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, dateStyle: "full", timeStyle: "long",
+    }).format(new Date());
+    return `You are an assistant. Local time: ${now} (${tz}).`;
+  },
+});
+```
+
+The function is called once per request to the LLM. `context` is caller-owned and immutable through the call tree — there is no per-tool or per-subagent override.
+
 ---
 
 ## `AgentRun`
