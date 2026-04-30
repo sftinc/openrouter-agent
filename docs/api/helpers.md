@@ -207,7 +207,7 @@ Per-variant typed handlers consumed by `consumeAgentEvents`. All fields are opti
 
 Source: `src/helpers/streamText.ts:30`.
 
-Async iterable of assistant text. Yields each non-empty `message:delta.text` chunk as it arrives. If the stream completes without ever emitting a delta but a final assistant `message` carries string content, yields that content as a single trailing chunk (covers non-streaming providers).
+Async iterable of assistant text. Yields each non-empty `message:delta.content` chunk as it arrives. If the stream completes without ever emitting a delta but a final assistant `message` carries string content, yields that content as a single trailing chunk (covers non-streaming providers).
 
 **Signature**
 
@@ -279,8 +279,8 @@ function serializeEvent(event: AgentEvent): string;
 ```ts
 import { serializeEvent } from "@sftinc/openrouter-agent";
 
-const line = serializeEvent({ type: "message:delta", runId: "r1", text: "hi" });
-// '{"type":"message:delta","runId":"r1","text":"hi"}'
+const line = serializeEvent({ type: "message:delta", runId: "r1", content: "hi" });
+// '{"type":"message:delta","runId":"r1","content":"hi"}'
 ```
 
 ---
@@ -361,7 +361,7 @@ const response = await fetch("/api/agent", {
 
 for await (const event of readEventStream(response.body!)) {
   if (event.type === "message:delta") {
-    document.querySelector("#out")!.textContent += event.text;
+    document.querySelector("#out")!.textContent += event.content;
   } else if (event.type === "error") {
     console.error(event.runId, event.error.message);
   }

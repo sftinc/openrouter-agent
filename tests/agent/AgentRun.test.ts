@@ -36,8 +36,8 @@ describe("AgentRun", () => {
   test("iteration yields every event in order", async () => {
     const events: AgentEvent[] = [
       { type: "agent:start", runId: "r1", agentName: "a" },
-      { type: "message:delta", runId: "r1", text: "he" },
-      { type: "message:delta", runId: "r1", text: "llo" },
+      { type: "message:delta", runId: "r1", content: "he" },
+      { type: "message:delta", runId: "r1", content: "llo" },
       { type: "agent:end", runId: "r1", result: mkResult({ content: "hello" }) },
     ];
     const run = runWithEvents(events);
@@ -86,8 +86,8 @@ describe("AgentRun", () => {
   test("events emitted synchronously before iterator attach are buffered", async () => {
     const run = new AgentRun(async (emit) => {
       emit({ type: "agent:start", runId: "r1", agentName: "a" });
-      emit({ type: "message:delta", runId: "r1", text: "a" });
-      emit({ type: "message:delta", runId: "r1", text: "b" });
+      emit({ type: "message:delta", runId: "r1", content: "a" });
+      emit({ type: "message:delta", runId: "r1", content: "b" });
       emit({ type: "agent:end", runId: "r1", result: mkResult({ content: "ab" }) });
     });
     await Promise.resolve();

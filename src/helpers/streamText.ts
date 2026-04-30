@@ -1,6 +1,6 @@
 /**
  * `streamText` — async-iterates assistant text from an {@link AgentEvent}
- * stream, yielding `message:delta.text` chunks in arrival order. Falls back
+ * stream, yielding `message:delta.content` chunks in arrival order. Falls back
  * to the final assistant `message.content` if no deltas ever arrived (e.g.
  * non-streaming providers).
  */
@@ -9,7 +9,7 @@ import type { AgentEvent } from "../agent/events.js";
 /**
  * Yield assistant text from an agent run.
  *
- * Yields each `message:delta.text` chunk as it arrives. If the stream
+ * Yields each `message:delta.content` chunk as it arrives. If the stream
  * completes without ever emitting a delta AND a final assistant `message`
  * carries string content, yields that content as a single trailing chunk.
  * Tool calls and reasoning content are not yielded.
@@ -34,9 +34,9 @@ export async function* streamText(
   let pendingFinal: string | undefined;
   for await (const event of source) {
     if (event.type === "message:delta") {
-      if (event.text.length === 0) continue;
+      if (event.content.length === 0) continue;
       sawDelta = true;
-      yield event.text;
+      yield event.content;
       continue;
     }
     if (

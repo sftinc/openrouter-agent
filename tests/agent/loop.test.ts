@@ -640,7 +640,7 @@ describe("runLoop", () => {
     await runLoop(cfg, "hi", {}, collect(events));
 
     const deltas = events.filter((e) => e.type === "message:delta");
-    expect(deltas.map((e: any) => e.text)).toEqual(["Hel", "lo ", "world"]);
+    expect(deltas.map((e: any) => e.content)).toEqual(["Hel", "lo ", "world"]);
 
     const msg = events.find((e) => e.type === "message");
     expect(msg?.type).toBe("message");

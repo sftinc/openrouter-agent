@@ -167,7 +167,7 @@ export type AgentEvent =
       /** Run id this delta belongs to. */
       runId: string;
       /** Newly arrived text since the previous delta. NOT a cumulative buffer. */
-      text: string;
+      content: string;
       /** Optional display payload supplied by the emitter. */
       display?: EventDisplay;
     }

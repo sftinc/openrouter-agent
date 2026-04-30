@@ -162,7 +162,7 @@ console.log(result.content, result.stopReason, result.usage);
 
 // 2. Stream events with for-await.
 for await (const ev of agent.run("Another haiku.")) {
-  if (ev.type === "message:delta") process.stdout.write(ev.text);
+  if (ev.type === "message:delta") process.stdout.write(ev.content);
   if (ev.type === "agent:end")     console.log("\n", ev.result.stopReason);
 }
 

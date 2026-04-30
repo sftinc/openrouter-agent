@@ -259,7 +259,7 @@ export type { SessionStore, SessionRecord, InMemorySessionStoreOptions } from ".
  *   `AsyncIterable<AgentEvent>` that routes each event to a per-variant
  *   handler defined by {@link AgentEventHandlers}.
  * - {@link streamText} — async-iterable of assistant text chunks; yields
- *   each `message:delta.text` and falls back to the final assistant message
+ *   each `message:delta.content` and falls back to the final assistant message
  *   when no deltas arrive.
  * - {@link serializeEvent} / {@link serializeEventsAsNDJSON} /
  *   {@link readEventStream} — NDJSON codec for streaming events over HTTP.

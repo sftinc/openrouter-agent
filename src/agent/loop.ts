@@ -784,7 +784,7 @@ export async function runLoop(
             if (typeof sc.delta.content === "string" && sc.delta.content.length > 0) {
               contentBuf += sc.delta.content;
               hasEmittedContentDelta = true;
-              emit({ type: "message:delta", runId, text: sc.delta.content });
+              emit({ type: "message:delta", runId, content: sc.delta.content });
             }
             if (sc.delta.tool_calls) {
               for (const d of sc.delta.tool_calls) mergeToolCallDelta(toolCallBuf, d);

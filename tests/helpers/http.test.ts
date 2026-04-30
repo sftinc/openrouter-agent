@@ -55,7 +55,7 @@ describe("handleAgentRun", () => {
   test("streams events as NDJSON with default headers", async () => {
     const events: AgentEvent[] = [
       { type: "agent:start", runId: "r1", agentName: "fake", startedAt: 0 },
-      { type: "message:delta", runId: "r1", text: "hi" },
+      { type: "message:delta", runId: "r1", content: "hi" },
     ];
     const agent = fakeAgent({ events });
     const res = makeMockRes();
@@ -125,8 +125,8 @@ describe("handleAgentRun", () => {
 describe("handleAgentRunWebResponse", () => {
   test("returns a 200 Response with NDJSON body and merged headers", async () => {
     const events: AgentEvent[] = [
-      { type: "message:delta", runId: "r1", text: "a" },
-      { type: "message:delta", runId: "r1", text: "b" },
+      { type: "message:delta", runId: "r1", content: "a" },
+      { type: "message:delta", runId: "r1", content: "b" },
     ];
     const agent = fakeAgent({ events });
     const res = await handleAgentRunWebResponse(agent, "hi", { sessionId: "abc" });

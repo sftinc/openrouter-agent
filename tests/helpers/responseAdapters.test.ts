@@ -40,8 +40,8 @@ function makeMockRes() {
 describe("pipeEventsToNodeResponse", () => {
   test("writes default headers and NDJSON lines, then ends", async () => {
     const events: AgentEvent[] = [
-      { type: "message:delta", runId: "r1", text: "a" },
-      { type: "message:delta", runId: "r1", text: "b" },
+      { type: "message:delta", runId: "r1", content: "a" },
+      { type: "message:delta", runId: "r1", content: "b" },
     ];
     const res = makeMockRes();
     await pipeEventsToNodeResponse(iter(events), res);
@@ -77,9 +77,9 @@ describe("pipeEventsToNodeResponse", () => {
 
     let resolveLong: (() => void) | undefined;
     async function* slow(): AsyncIterable<AgentEvent> {
-      yield { type: "message:delta", runId: "r1", text: "a" };
+      yield { type: "message:delta", runId: "r1", content: "a" };
       await new Promise<void>((r) => { resolveLong = r; });
-      yield { type: "message:delta", runId: "r1", text: "b" };
+      yield { type: "message:delta", runId: "r1", content: "b" };
     }
 
     const pipePromise = pipeEventsToNodeResponse(slow(), res, { abort });
@@ -137,8 +137,8 @@ describe("pipeEventsToNodeResponse — Gap 1 (error listener)", () => {
 describe("eventsToWebResponse", () => {
   test("returns a Response with default NDJSON headers and 200 status", async () => {
     const events: AgentEvent[] = [
-      { type: "message:delta", runId: "r1", text: "a" },
-      { type: "message:delta", runId: "r1", text: "b" },
+      { type: "message:delta", runId: "r1", content: "a" },
+      { type: "message:delta", runId: "r1", content: "b" },
     ];
     const res = eventsToWebResponse(iter(events));
     expect(res.status).toBe(200);
@@ -166,7 +166,7 @@ describe("eventsToWebResponse", () => {
     const abort = new AbortController();
 
     async function* slow(): AsyncIterable<AgentEvent> {
-      yield { type: "message:delta", runId: "r1", text: "a" };
+      yield { type: "message:delta", runId: "r1", content: "a" };
       // Hang indefinitely until abort.
       await new Promise<void>((resolve) => abort.signal.addEventListener("abort", () => resolve()));
     }

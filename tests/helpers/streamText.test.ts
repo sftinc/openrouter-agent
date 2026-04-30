@@ -16,8 +16,8 @@ describe("streamText", () => {
   test("yields delta text in arrival order", async () => {
     const events: AgentEvent[] = [
       { type: "agent:start", runId: "r1", agentName: "demo", startedAt: 0 },
-      { type: "message:delta", runId: "r1", text: "Hello " },
-      { type: "message:delta", runId: "r1", text: "world" },
+      { type: "message:delta", runId: "r1", content: "Hello " },
+      { type: "message:delta", runId: "r1", content: "world" },
     ];
     expect(await collect(streamText(iter(events)))).toEqual(["Hello ", "world"]);
   });
@@ -36,7 +36,7 @@ describe("streamText", () => {
 
   test("does not re-emit the final message when deltas were seen", async () => {
     const events: AgentEvent[] = [
-      { type: "message:delta", runId: "r1", text: "streamed" },
+      { type: "message:delta", runId: "r1", content: "streamed" },
       {
         type: "message",
         runId: "r1",
@@ -89,8 +89,8 @@ describe("streamText", () => {
 
   test("ignores empty delta strings", async () => {
     const events: AgentEvent[] = [
-      { type: "message:delta", runId: "r1", text: "" },
-      { type: "message:delta", runId: "r1", text: "ok" },
+      { type: "message:delta", runId: "r1", content: "" },
+      { type: "message:delta", runId: "r1", content: "ok" },
     ];
     expect(await collect(streamText(iter(events)))).toEqual(["ok"]);
   });

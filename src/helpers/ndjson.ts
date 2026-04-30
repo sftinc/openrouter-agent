@@ -24,8 +24,8 @@ import type { AgentEvent } from "../agent/events.js";
  * ```ts
  * import { serializeEvent } from "./helpers";
  *
- * const line = serializeEvent({ type: "message:delta", runId: "r1", text: "hi" });
- * // '{"type":"message:delta","runId":"r1","text":"hi"}'
+ * const line = serializeEvent({ type: "message:delta", runId: "r1", content: "hi" });
+ * // '{"type":"message:delta","runId":"r1","content":"hi"}'
  * ```
  */
 export function serializeEvent(event: AgentEvent): string {
@@ -87,7 +87,7 @@ export async function* serializeEventsAsNDJSON(
  *
  * const response = await fetch("/api/agent", { method: "POST", body: JSON.stringify({ prompt }) });
  * for await (const event of readEventStream(response.body!)) {
- *   if (event.type === "message:delta") process.stdout.write(event.text);
+ *   if (event.type === "message:delta") process.stdout.write(event.content);
  * }
  * ```
  */

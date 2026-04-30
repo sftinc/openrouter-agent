@@ -46,7 +46,7 @@ describe("displayOf", () => {
     const ev: AgentEvent = {
       type: "message:delta",
       runId: "r1",
-      text: "hello",
+      content: "hello",
     };
     expect(displayOf(ev)).toEqual({ title: "Message delta" });
   });

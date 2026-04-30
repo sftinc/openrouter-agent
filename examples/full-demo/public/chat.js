@@ -309,7 +309,7 @@ async function runRequest(message) {
         break;
       }
       case "message:delta": {
-        if (typeof event.text !== "string" || event.text.length === 0) break;
+        if (typeof event.content !== "string" || event.content.length === 0) break;
         // Buffer text but do NOT render until we know this turn's classifier.
         // - On `message:preamble` (turn ends in tool calls): the preamble
         //   case above renders the buffered text into the activity card.
@@ -317,7 +317,7 @@ async function runRequest(message) {
         //   text into a fresh assistant bubble.
         // - On `tool:start` arriving before either (tool-only turn with no
         //   text), the buffer stays empty and nothing renders.
-        assistantBuf += event.text;
+        assistantBuf += event.content;
         break;
       }
       case "message:preamble": {

@@ -29,7 +29,7 @@ describe("serializeEvent", () => {
     const ev: AgentEvent = {
       type: "message:delta",
       runId: "r1",
-      text: "hi",
+      content: "hi",
     };
     const line = serializeEvent(ev);
     expect(line).not.toContain("\n");
@@ -40,8 +40,8 @@ describe("serializeEvent", () => {
 describe("serializeEventsAsNDJSON", () => {
   test("yields each event encoded with a trailing newline", async () => {
     const events: AgentEvent[] = [
-      { type: "message:delta", runId: "r1", text: "a" },
-      { type: "message:delta", runId: "r1", text: "b" },
+      { type: "message:delta", runId: "r1", content: "a" },
+      { type: "message:delta", runId: "r1", content: "b" },
     ];
     const lines = await collect(serializeEventsAsNDJSON(iter(events)));
     expect(lines.length).toBe(2);
@@ -52,7 +52,7 @@ describe("serializeEventsAsNDJSON", () => {
 
   test("yields a synthetic error line if the source throws", async () => {
     const events: AgentEvent[] = [
-      { type: "message:delta", runId: "r1", text: "a" },
+      { type: "message:delta", runId: "r1", content: "a" },
     ];
     const lines = await collect(
       serializeEventsAsNDJSON(throwingIter(events, new Error("boom"))),
@@ -114,8 +114,8 @@ async function collectEvents(
 describe("readEventStream", () => {
   test("parses NDJSON bytes back into events", async () => {
     const events: AgentEvent[] = [
-      { type: "message:delta", runId: "r1", text: "a" },
-      { type: "message:delta", runId: "r1", text: "b" },
+      { type: "message:delta", runId: "r1", content: "a" },
+      { type: "message:delta", runId: "r1", content: "b" },
     ];
     const body = streamFromString(events.map((e) => JSON.stringify(e)).join("\n") + "\n");
     expect(await collectEvents(readEventStream(body))).toEqual(events);
@@ -123,7 +123,7 @@ describe("readEventStream", () => {
 
   test("skips empty and whitespace-only lines", async () => {
     const events: AgentEvent[] = [
-      { type: "message:delta", runId: "r1", text: "a" },
+      { type: "message:delta", runId: "r1", content: "a" },
     ];
     const body = streamFromString(
       "\n   \n" + JSON.stringify(events[0]) + "\n\n",
@@ -132,7 +132,7 @@ describe("readEventStream", () => {
   });
 
   test("yields a synthetic error event for malformed lines and continues", async () => {
-    const ok: AgentEvent = { type: "message:delta", runId: "r1", text: "ok" };
+    const ok: AgentEvent = { type: "message:delta", runId: "r1", content: "ok" };
     const body = streamFromString(`not-json\n${JSON.stringify(ok)}\n`);
     const events = await collectEvents(readEventStream(body));
     expect(events.length).toBe(2);
@@ -145,7 +145,7 @@ describe("readEventStream", () => {
   });
 
   test("handles events split across chunk boundaries", async () => {
-    const ev: AgentEvent = { type: "message:delta", runId: "r1", text: "abc" };
+    const ev: AgentEvent = { type: "message:delta", runId: "r1", content: "abc" };
     const line = JSON.stringify(ev) + "\n";
     const mid = Math.floor(line.length / 2);
     const body = streamFromChunks([line.slice(0, mid), line.slice(mid)]);
