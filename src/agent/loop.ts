@@ -426,7 +426,7 @@ async function executeToolCall(
     runId,
     toolUseId,
     toolName,
-    output: out,
+    content: out,
     metadata: result.metadata,
     startedAt: toolStartedAt,
     endedAt: toolEndedAt,

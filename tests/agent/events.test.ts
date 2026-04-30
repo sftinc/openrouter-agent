@@ -30,7 +30,7 @@ describe("defaultDisplay", () => {
       runId: "r1",
       toolUseId: "t1",
       toolName: "web_search",
-      output: "result",
+      content: "result",
       startedAt: 1000,
       endedAt: 3500,
       elapsedMs: 2500,

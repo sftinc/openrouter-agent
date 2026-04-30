@@ -231,7 +231,7 @@ export type AgentEvent =
       /** Name of the tool as registered on the agent. Mirrors the value on the originating `tool:start` so consumers can render `tool:end` standalone. */
       toolName: string;
       /** Tool result content (the same value passed back to the model in the `tool` role message). */
-      output: unknown;
+      content: unknown;
       /** Optional structured metadata returned by the tool, surfaced for telemetry/UI. */
       metadata?: Record<string, unknown>;
       /** Resolved display payload from the tool's `success` hook, if any. */

@@ -61,7 +61,7 @@ describe("streamText", () => {
         runId: "r1",
         toolUseId: "t1",
         toolName: "calc",
-        output: "42",
+        content: "42",
         startedAt: 0,
         endedAt: 1,
         elapsedMs: 1,

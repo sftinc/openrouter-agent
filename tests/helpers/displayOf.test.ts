@@ -34,7 +34,7 @@ describe("displayOf", () => {
       runId: "r1",
       toolUseId: "t1",
       toolName: "calc",
-      output: "ok",
+      content: "ok",
       startedAt: 0,
       endedAt: 2000,
       elapsedMs: 2000,

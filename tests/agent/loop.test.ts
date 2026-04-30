@@ -167,7 +167,7 @@ describe("runLoop", () => {
     expect(toolEnd).toBeDefined();
     if (toolEnd?.type === "tool:end") {
       expect("error" in toolEnd).toBe(false);
-      if (!("error" in toolEnd)) expect(toolEnd.output).toBe("ECHO:hi");
+      if (!("error" in toolEnd)) expect(toolEnd.content).toBe("ECHO:hi");
     }
   });
 
@@ -727,8 +727,8 @@ describe("runLoop", () => {
 
     const toolEnd = events.find((e) => e.type === "tool:end");
     expect(toolEnd?.type).toBe("tool:end");
-    if (toolEnd?.type === "tool:end" && "output" in toolEnd) {
-      expect(toolEnd.output).toBe("ECHO:hi");
+    if (toolEnd?.type === "tool:end" && "content" in toolEnd) {
+      expect(toolEnd.content).toBe("ECHO:hi");
     }
   });
 
