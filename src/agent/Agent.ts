@@ -433,7 +433,7 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
           if (result.stopReason === "error") {
             return { error: result.error?.message ?? "subagent errored", metadata };
           }
-          return { content: result.text, metadata };
+          return { content: result.content, metadata };
         } catch (err) {
           return { error: err instanceof Error ? err.message : String(err) };
         }

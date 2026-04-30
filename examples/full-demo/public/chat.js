@@ -362,7 +362,7 @@ async function runRequest(message) {
         // them — they would otherwise overwrite the activity card title with
         // the subagent's elapsed time and (when no parent message has
         // rendered yet) trigger the fallback below using the subagent's
-        // `result.text`, producing a duplicate chat bubble.
+        // `result.content`, producing a duplicate chat bubble.
         if (event.runId !== topRunId) break;
         // Replace the live title/content with the final state. The title
         // always reports the elapsed time so the user sees how long the

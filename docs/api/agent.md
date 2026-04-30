@@ -58,7 +58,7 @@ new Agent<Input = { input: string }>(config: AgentConfig<Input>)
 The constructor does the following work, in order:
 
 1. Resolves `inputSchema` (default `z.object({ input: z.string() })` — `src/agent/Agent.ts:120`).
-2. Calls `super(...)` to register a `Tool` whose `execute` runs a nested `runLoop`, forwarding child events to the parent via `deps.emit` and returning either `{ content: result.text }` or `{ error }` based on `result.stopReason` (`src/agent/Agent.ts:175-203`).
+2. Calls `super(...)` to register a `Tool` whose `execute` runs a nested `runLoop`, forwarding child events to the parent via `deps.emit` and returning either `{ content: result.content }` or `{ error }` based on `result.stopReason` (`src/agent/Agent.ts:175-203`).
 3. Stores the per-agent `client` overrides, `systemPrompt`, `tools`, `maxTurns`, `sessionStore`, and `display`.
 4. Resolves the OpenRouter client via `getOpenRouterClient()` and falls back to `new OpenRouterClient({})` if no project-wide client has been registered (`src/agent/Agent.ts:211`).
 
@@ -158,7 +158,7 @@ const agent = new Agent({
 
 // 1. Final result only.
 const result = await agent.run("Write a haiku about rain.");
-console.log(result.text, result.stopReason, result.usage);
+console.log(result.content, result.stopReason, result.usage);
 
 // 2. Stream events with for-await.
 for await (const ev of agent.run("Another haiku.")) {
@@ -576,6 +576,6 @@ The following are not exported from the package but document the loop's behavior
 | `pickAgentEndHook(display, result)` | `src/agent/loop.ts:283-290` | Implements the `agent:end` hook routing table. |
 | `executeToolCall(toolCall, toolByName, deps, runId, emit)` | `src/agent/loop.ts:312-396` | Single-tool dispatcher: validates args, calls `Tool.execute`, normalizes the result, emits `tool:start` / `tool:end`, returns the `role: "tool"` `Message` to append. Logs to stderr when `OPENROUTER_DEBUG` env var is set. |
 | `resolveInitialMessages(input, systemOverride, systemFromConfig, sessionMessages)` | `src/agent/loop.ts:467-513` | Builds the seed `messages` array and resolves the system prompt with `systemOverride` > embedded `system` > `systemFromConfig` precedence. Strips `system`-role messages from both session history and seed input. |
-| `lastAssistantText(messages)` | `src/agent/loop.ts:523-531` | Walks messages backwards and returns the most recent `assistant` message with string content. Returns `""` if none exist (empty `Result.text` on tool-only final turns). |
+| `lastAssistantContent(messages)` | `src/agent/loop.ts:523-531` | Walks messages backwards and returns the most recent `assistant` message with string content. Returns `""` if none exist (empty `Result.content` on tool-only final turns). |
 | `mergeToolCallDelta(buf, delta)` | `src/agent/loop.ts:484-512` | Reassembles streamed tool-call fragments keyed by `index`; concatenates argument fragments, first-seen `id`/`type`/`name` win. |
 | `assembleToolCalls(buf)` | `src/agent/loop.ts:527-542` | Flattens the per-index buffer into an ordered `ToolCall[]`. Defaults missing fields so the structure always type-checks. |

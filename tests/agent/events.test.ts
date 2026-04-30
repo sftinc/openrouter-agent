@@ -54,7 +54,7 @@ describe("defaultDisplay", () => {
       type: "agent:end",
       runId: "r1",
       result: {
-        text: "",
+        content: "",
         messages: [],
         stopReason: "done",
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -70,7 +70,7 @@ describe("defaultDisplay", () => {
       type: "agent:end",
       runId: "r1",
       result: {
-        text: "",
+        content: "",
         messages: [],
         stopReason: "error",
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },

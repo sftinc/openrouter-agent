@@ -74,7 +74,7 @@
  * });
  *
  * const result = await agent.run("What is 347 * 29?");
- * console.log(result.text, result.stopReason, result.usage);
+ * console.log(result.content, result.stopReason, result.usage);
  * ```
  *
  * @example

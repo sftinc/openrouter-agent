@@ -520,7 +520,7 @@ function resolveInitialMessages(
  *   `content` is a string, or `""` if none exist (e.g. the assistant only
  *   produced tool calls).
  */
-function lastAssistantText(messages: Message[]): string {
+function lastAssistantContent(messages: Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m && m.role === "assistant" && typeof m.content === "string") {
@@ -928,7 +928,7 @@ export async function runLoop(
   }
 
   const result: Result = {
-    text: lastAssistantText(messages),
+    content: lastAssistantContent(messages),
     messages: messages.slice(sessionCount),
     stopReason,
     usage,

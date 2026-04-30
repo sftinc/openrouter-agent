@@ -292,7 +292,7 @@ export interface Result {
    * Empty string if the run produced no assistant text (e.g. `error` before
    * any turn completed, or the last turn was all tool calls).
    */
-  text: string;
+  content: string;
   /** Full conversation including all tool messages from this run. */
   messages: Message[];
   /**

@@ -219,7 +219,7 @@ The result of an agent run. Defined at `src/types/Message.ts:289-322`. Returned 
 
 | Field             | Type                                                                                  | Required | Default | Description                                                                                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------- | -------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `text`            | `string`                                                                              | required | `""`    | Final assistant text message after all tool calls in the run. Empty string if the run produced no assistant text (e.g. errored before the first turn, or the last turn was all tool calls). |
+| `content`         | `string`                                                                              | required | `""`    | Final assistant text message after all tool calls in the run. Empty string if the run produced no assistant text (e.g. errored before the first turn, or the last turn was all tool calls). |
 | `messages`        | `Message[]`                                                                           | required | —       | Full conversation including all tool messages from this run. System messages are not stored here.                                                        |
 | `stopReason`      | `"done" \| "max_turns" \| "aborted" \| "length" \| "content_filter" \| "error"`       | required | —       | Why the loop stopped. See the **stopReason values** section below for full semantics.                                                                    |
 | `usage`           | `Usage`                                                                               | required | —       | Accumulated usage across every LLM call in the run. See `Usage` above.                                                                                   |
@@ -231,7 +231,7 @@ The result of an agent run. Defined at `src/types/Message.ts:289-322`. Returned 
 
 ```ts
 const result: Result = {
-  text: "The answer is 42.",
+  content: "The answer is 42.",
   messages: [
     { role: "user", content: "What is the answer?" },
     { role: "assistant", content: "The answer is 42." },

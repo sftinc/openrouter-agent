@@ -41,6 +41,6 @@ const orchestrator = new Agent({
 
 const result1 = await orchestrator.run('Write me a haiku about the ocean.')
 
-console.log('[1 text]', result1.text)
+console.log('[1 content]', result1.content)
 console.log('\n[1 result]')
 console.dir(result1, { depth: null })

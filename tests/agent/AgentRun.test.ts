@@ -5,7 +5,7 @@ import type { Result } from "../../src/types/index.js";
 
 function mkResult(overrides: Partial<Result> = {}): Result {
   return {
-    text: "ok",
+    content: "ok",
     messages: [],
     stopReason: "done",
     usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -27,10 +27,10 @@ describe("AgentRun", () => {
   test("await resolves with the Result from agent:end", async () => {
     const run = runWithEvents([
       { type: "agent:start", runId: "r1", agentName: "a" },
-      { type: "agent:end", runId: "r1", result: mkResult({ text: "hi" }) },
+      { type: "agent:end", runId: "r1", result: mkResult({ content: "hi" }) },
     ]);
     const result = await run;
-    expect(result.text).toBe("hi");
+    expect(result.content).toBe("hi");
   });
 
   test("iteration yields every event in order", async () => {
@@ -38,7 +38,7 @@ describe("AgentRun", () => {
       { type: "agent:start", runId: "r1", agentName: "a" },
       { type: "message:delta", runId: "r1", text: "he" },
       { type: "message:delta", runId: "r1", text: "llo" },
-      { type: "agent:end", runId: "r1", result: mkResult({ text: "hello" }) },
+      { type: "agent:end", runId: "r1", result: mkResult({ content: "hello" }) },
     ];
     const run = runWithEvents(events);
     const seen: AgentEvent[] = [];
@@ -54,20 +54,20 @@ describe("AgentRun", () => {
   test("iterate + await same handle returns the same result", async () => {
     const events: AgentEvent[] = [
       { type: "agent:start", runId: "r1", agentName: "a" },
-      { type: "agent:end", runId: "r1", result: mkResult({ text: "x" }) },
+      { type: "agent:end", runId: "r1", result: mkResult({ content: "x" }) },
     ];
     const run = runWithEvents(events);
     const seen: AgentEvent[] = [];
     for await (const ev of run) seen.push(ev);
     const result = await run;
-    expect(result.text).toBe("x");
+    expect(result.content).toBe("x");
     expect(seen.length).toBe(2);
   });
 
   test("awaiting .result twice returns the memoized Result", async () => {
     const run = runWithEvents([
       { type: "agent:start", runId: "r1", agentName: "a" },
-      { type: "agent:end", runId: "r1", result: mkResult({ text: "y" }) },
+      { type: "agent:end", runId: "r1", result: mkResult({ content: "y" }) },
     ]);
     const a = await run.result;
     const b = await run.result;
@@ -88,7 +88,7 @@ describe("AgentRun", () => {
       emit({ type: "agent:start", runId: "r1", agentName: "a" });
       emit({ type: "message:delta", runId: "r1", text: "a" });
       emit({ type: "message:delta", runId: "r1", text: "b" });
-      emit({ type: "agent:end", runId: "r1", result: mkResult({ text: "ab" }) });
+      emit({ type: "agent:end", runId: "r1", result: mkResult({ content: "ab" }) });
     });
     await Promise.resolve();
     const seen: AgentEvent[] = [];
@@ -115,10 +115,10 @@ describe("AgentRun", () => {
     const run = runWithEvents([
       { type: "agent:start", runId: "outer", agentName: "a" },
       { type: "agent:start", runId: "inner", parentRunId: "outer", agentName: "sub" },
-      { type: "agent:end", runId: "inner", result: mkResult({ text: "SUB" }) },
-      { type: "agent:end", runId: "outer", result: mkResult({ text: "TOP" }) },
+      { type: "agent:end", runId: "inner", result: mkResult({ content: "SUB" }) },
+      { type: "agent:end", runId: "outer", result: mkResult({ content: "TOP" }) },
     ]);
     const result = await run;
-    expect(result.text).toBe("TOP");
+    expect(result.content).toBe("TOP");
   });
 });

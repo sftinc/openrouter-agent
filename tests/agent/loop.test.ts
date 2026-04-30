@@ -117,7 +117,7 @@ describe("runLoop", () => {
     expect(end?.type).toBe("agent:end");
     if (end?.type === "agent:end") {
       expect(end.result.stopReason).toBe("done");
-      expect(end.result.text).toBe("hello");
+      expect(end.result.content).toBe("hello");
       expect(end.result.usage.total_tokens).toBe(15);
       expect(end.result.generationIds).toEqual(["gen-1"]);
     }
@@ -651,7 +651,7 @@ describe("runLoop", () => {
 
     const end = events.find((e) => e.type === "agent:end");
     if (end?.type === "agent:end") {
-      expect(end.result.text).toBe("Hello world");
+      expect(end.result.content).toBe("Hello world");
       expect(end.result.stopReason).toBe("done");
       expect(end.result.usage.total_tokens).toBe(4);
     }
@@ -1086,7 +1086,7 @@ describe("Usage accumulation — multimodal & cost", () => {
     test("default title (string) is used when phase hooks omit title", async () => {
       const events = await runWithDisplay({
         title: "Researcher",
-        success: (r) => ({ content: r.text }),
+        success: (r) => ({ content: r.content }),
       });
       const start = events.find((e) => e.type === "agent:start");
       const end = events.find((e) => e.type === "agent:end");
@@ -1107,7 +1107,7 @@ describe("Usage accumulation — multimodal & cost", () => {
     test("success hook fires only on stopReason === done", async () => {
       const events = await runWithDisplay({
         title: "Run",
-        success: (r) => ({ title: "Done", content: r.text }),
+        success: (r) => ({ title: "Done", content: r.content }),
         error: () => ({ title: "Failed" }),
         end: () => ({ title: "Ended" }),
       });
@@ -1151,7 +1151,7 @@ describe("Usage accumulation — multimodal & cost", () => {
 
     test("no title anywhere emits no display", async () => {
       const events = await runWithDisplay({
-        success: (r) => ({ content: r.text }),
+        success: (r) => ({ content: r.content }),
       });
       const start = events.find((e) => e.type === "agent:start");
       const end = events.find((e) => e.type === "agent:end");

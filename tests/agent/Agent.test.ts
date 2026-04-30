@@ -26,7 +26,7 @@ describe('Agent', () => {
 		fetchSpy.mockResolvedValue(mockOkSse('hi there'))
 		const agent = new Agent({ name: 'a', description: 'd' })
 		const result = await agent.run('hello')
-		expect(result.text).toBe('hi there')
+		expect(result.content).toBe('hi there')
 		expect(result.stopReason).toBe('done')
 		expect(result.usage.total_tokens).toBe(8)
 	})
@@ -90,7 +90,7 @@ describe('Agent', () => {
 		const child = new Agent({ name: 'child', description: 'a subagent' })
 		const parent = new Agent({ name: 'parent', description: 'the parent', tools: [child] })
 		const result = await parent.run('use the child')
-		expect(result.text).toBe('parent-final')
+		expect(result.content).toBe('parent-final')
 		expect(result.stopReason).toBe('done')
 	})
 
@@ -209,7 +209,7 @@ describe('Agent', () => {
 		fetchSpy.mockResolvedValueOnce(mockOkSse('recovered'))
 		const second = await agent.run('retry', { sessionId: 's1' })
 		expect(second.stopReason).toBe('done')
-		expect(second.text).toBe('recovered')
+		expect(second.content).toBe('recovered')
 	})
 
 	test('run throws SessionBusyError synchronously when session is already busy', async () => {
@@ -313,7 +313,7 @@ describe('Agent', () => {
 				}),
 				success: (result) => ({
 					title: 'Child Done',
-					content: `text=${result.text}`,
+					content: `text=${result.content}`,
 				}),
 			},
 		})
@@ -1098,7 +1098,7 @@ describe('Agent — subagent display under concurrent parent runs', () => {
       name: 'child',
       description: 'sub',
       display: {
-        success: (result) => ({ title: 'done', content: result.text }),
+        success: (result) => ({ title: 'done', content: result.content }),
       },
     })
 

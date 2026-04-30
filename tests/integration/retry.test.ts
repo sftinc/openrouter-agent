@@ -75,7 +75,7 @@ describe("integration — retry through Agent.run", () => {
     const result = await run.result;
 
     expect(result.stopReason).toBe("done");
-    expect(result.text).toBe("hi");
+    expect(result.content).toBe("hi");
     expect(events.filter((e) => e.type === "retry")).toHaveLength(2);
     expect(events.filter((e) => e.type === "error")).toHaveLength(0);
     expect(calls).toBe(3);

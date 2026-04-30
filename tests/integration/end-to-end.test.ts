@@ -70,7 +70,7 @@ describe("end-to-end", () => {
     const end = events.find((e) => e.type === "agent:end");
     if (end?.type !== "agent:end") throw new Error("no agent:end event");
 
-    expect(end.result.text).toBe("value for X is 42");
+    expect(end.result.content).toBe("value for X is 42");
     expect(end.result.stopReason).toBe("done");
     expect(end.result.generationIds).toEqual(["gen-1", "gen-2"]);
     expect(end.result.usage.total_tokens).toBe(33);
