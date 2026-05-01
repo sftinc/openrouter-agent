@@ -197,6 +197,106 @@ export interface RequestOptions {
 export type CompleteStreamOptions = RequestOptions
 
 /**
+ * Body of a request to {@link OpenRouterClient.embed}. Mirrors OpenRouter's
+ * OpenAI-compatible embeddings shape but deliberately narrows `input` to
+ * text-only for v1 — multimodal and token-id inputs are valid upstream and
+ * can be added later as a non-breaking union widening.
+ *
+ * @example
+ * ```ts
+ * const res = await client.embed({
+ *   model: 'qwen/qwen3-embedding-8b',
+ *   input: ['hello', 'world'],
+ *   dimensions: 1536,
+ * })
+ * const vectors = res.data.map((d) => d.embedding as number[])
+ * ```
+ */
+export interface EmbedRequest {
+	/**
+	 * Embedding model id (e.g. `"qwen/qwen3-embedding-8b"`). Falls back to
+	 * the client's `embedModel` when omitted. {@link OpenRouterClient.embed}
+	 * throws if neither is set — there is no package-level default.
+	 */
+	model?: string
+	/** Text(s) to embed. */
+	input: string | string[]
+	/**
+	 * Optional output dimensionality. Rejected by models that do not
+	 * support it (e.g. fixed-dim providers).
+	 */
+	dimensions?: number
+	/**
+	 * Output encoding. Default `"float"` (vector); `"base64"` returns the
+	 * vector as a base64-encoded binary string for transport efficiency.
+	 */
+	encoding_format?: 'float' | 'base64'
+	/**
+	 * Provider-specific input classification. Cohere uses
+	 * `"search_query"` / `"search_document"` / `"classification"` /
+	 * `"clustering"`; Voyage uses `"query"` / `"document"`; other providers
+	 * may add more. Typed as `string` so each provider's vocabulary stays
+	 * valid without TS noise.
+	 */
+	input_type?: string
+	/** Optional end-user identifier forwarded to the provider. */
+	user?: string
+}
+
+/**
+ * Parsed response from {@link OpenRouterClient.embed}. Faithful to the
+ * OpenRouter (OpenAI-compatible) embeddings response — `id`, `cost`, and
+ * `prompt_tokens_details` are inconsistently populated across providers
+ * and so are typed as optional, mirroring how {@link CompletionsResponse}
+ * handles partial provider support.
+ *
+ * @example
+ * ```ts
+ * const res = await client.embed({ model: 'm', input: 'hi' })
+ * const vec = res.data[0].embedding
+ * if (typeof vec === 'string') {
+ *   // base64-encoded — only when encoding_format was 'base64'
+ * } else {
+ *   // float vector — the default
+ * }
+ * ```
+ */
+export interface EmbedResponse {
+	/** Server-assigned response id. */
+	id: string
+	/** Always `"list"`. Object discriminator. */
+	object: 'list'
+	/** The model that actually served the request. */
+	model: string
+	/** One entry per input, index-aligned. */
+	data: Array<{
+		object: 'embedding'
+		index: number
+		/**
+		 * Vector when `encoding_format` is `"float"` (the default). Base64-
+		 * encoded string when `encoding_format` is `"base64"`. Discriminate
+		 * with `typeof embedding === 'string'` before use.
+		 */
+		embedding: number[] | string
+	}>
+	/** Token usage and (optionally) cost. */
+	usage: {
+		prompt_tokens: number
+		total_tokens: number
+		/** Optional credit cost. Populated by some providers, omitted by others. */
+		cost?: number
+		/**
+		 * Optional per-modality / cache breakdown. Populated only by
+		 * providers that report it.
+		 */
+		prompt_tokens_details?: {
+			cached_tokens?: number
+			[key: string]: number | undefined
+		}
+	}
+}
+
+/**
  * Base URL for the OpenRouter v1 API. All endpoints in this client are
  * formed by appending a path (e.g. `/chat/completions`).
  */
