@@ -384,3 +384,85 @@ describe("OpenRouterClient.completeStream — connection-level retry", () => {
     await expect(iter.next()).rejects.toBeInstanceOf(StreamTruncatedError);
   });
 });
+
+describe("OpenRouterClient.complete — connection-level retry", () => {
+  let originalFetch: typeof fetch;
+  beforeEach(() => { originalFetch = global.fetch; });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  test("retries 503 once and resolves on the second 200", async () => {
+    let calls = 0;
+    global.fetch = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ error: { message: "upstream down" } }), {
+          status: 503,
+        });
+      }
+      return new Response(JSON.stringify(OK_RESPONSE), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const client = new OpenRouterClient({
+      apiKey: "sk-test",
+      retry: { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 5 },
+    });
+    const res = await client.complete({
+      model: "m",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(res.id).toBe("gen-abc");
+    expect(calls).toBe(2);
+  });
+
+  test("throws OpenRouterError after exhausting maxAttempts on 503", async () => {
+    let calls = 0;
+    global.fetch = vi.fn(async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ error: { message: "down" } }), {
+        status: 503,
+      });
+    }) as unknown as typeof fetch;
+
+    const client = new OpenRouterClient({
+      apiKey: "sk-test",
+      retry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 5 },
+    });
+    await expect(
+      client.complete({ model: "m", messages: [{ role: "user", content: "hi" }] }),
+    ).rejects.toSatisfy((e: unknown) => e instanceof OpenRouterError && e.code === 503);
+    expect(calls).toBe(2);
+  });
+
+  test("accepts a bare AbortSignal as the second argument (back-compat)", async () => {
+    global.fetch = vi.fn(async () => new Response(JSON.stringify(OK_RESPONSE), { status: 200 })) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "sk-test" });
+    const ac = new AbortController();
+    const res = await client.complete(
+      { model: "m", messages: [{ role: "user", content: "hi" }] },
+      ac.signal,
+    );
+    expect(res.id).toBe("gen-abc");
+  });
+
+  test("accepts a RequestOptions object with retryConfig override", async () => {
+    let calls = 0;
+    global.fetch = vi.fn(async () => {
+      calls += 1;
+      if (calls < 4) {
+        return new Response(JSON.stringify({ error: { message: "down" } }), { status: 503 });
+      }
+      return new Response(JSON.stringify(OK_RESPONSE), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const client = new OpenRouterClient({
+      apiKey: "sk-test",
+      retry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 5 },
+    });
+    const res = await client.complete(
+      { model: "m", messages: [{ role: "user", content: "hi" }] },
+      { retryConfig: { maxAttempts: 5, initialDelayMs: 1, maxDelayMs: 5 } },
+    );
+    expect(res.id).toBe("gen-abc");
+    expect(calls).toBe(4);
+  });
+});

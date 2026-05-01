@@ -457,17 +457,40 @@ export class OpenRouterClient {
 	 *   3. fields on `request`;
 	 *   4. `stream: false` (always forced).
 	 *
+	 * Connection-level retries follow the same policy as
+	 * {@link OpenRouterClient.completeStream}: retryable HTTP statuses
+	 * (`408`, `429`, `500`, `502`, `503`, `504`) and `fetch` rejections
+	 * are retried with exponential-jittered backoff. The 2xx
+	 * `response.json()` parse stays outside the retry loop — once a 200
+	 * body is in hand, retrying would re-charge the user.
+	 *
 	 * When `OPENROUTER_DEBUG` is set, the parsed response is logged to
 	 * stderr/stdout (yellow if it contains tool calls).
 	 *
 	 * @param request The completion request. `messages` is required.
-	 * @param signal Optional `AbortSignal` to cancel the underlying `fetch`.
+	 * @param signalOrOptions Optional. Accepts either an `AbortSignal`
+	 *   (legacy form) or a {@link RequestOptions} object with
+	 *   `signal`/`retryBudget`/`retryConfig`. Aborting cancels the
+	 *   underlying `fetch`.
 	 * @returns The parsed {@link CompletionsResponse}.
-	 * @throws {OpenRouterError} On non-2xx responses. Common codes: 401
-	 *   (missing or invalid key), 402 (out of credits), 429 (rate limited),
-	 *   503 (upstream provider error).
+	 * @throws {OpenRouterError} On non-2xx responses (after retry attempts
+	 *   are exhausted). Common codes: 401 (missing or invalid key), 402
+	 *   (out of credits), 429 (rate limited), 503 (upstream provider error).
 	 */
-	async complete(request: CompletionsRequest, signal?: AbortSignal): Promise<CompletionsResponse> {
+	async complete(
+		request: CompletionsRequest,
+		signalOrOptions?: AbortSignal | RequestOptions,
+	): Promise<CompletionsResponse> {
+		const opts: RequestOptions =
+			signalOrOptions instanceof AbortSignal
+				? { signal: signalOrOptions }
+				: (signalOrOptions ?? {})
+		const signal = opts.signal
+		const config = opts.retryConfig
+			? resolveRetryConfig({ ...this.retry, ...opts.retryConfig })
+			: this.retry
+		const budget = opts.retryBudget ?? createRetryBudget(config)
+
 		const headers = this.buildHeaders()
 
 		/**
@@ -481,29 +504,36 @@ export class OpenRouterClient {
 			stream: false as const,
 		}
 
-		const response = await fetch(`${BASE_URL}/chat/completions`, {
-			method: 'POST',
-			headers,
-			body: JSON.stringify(body),
-			signal,
-		})
+		const response = await withRetry(
+			async () => {
+				const res = await fetch(`${BASE_URL}/chat/completions`, {
+					method: 'POST',
+					headers,
+					body: JSON.stringify(body),
+					signal,
+				})
 
-		if (!response.ok) {
-			const errBody = await this.safeParseJson(response)
-			// eslint-disable-next-line no-console
-			console.error('[openrouter] error response:', response.status, JSON.stringify(errBody))
+				if (!res.ok) {
+					const errBody = await this.safeParseJson(res)
+					// eslint-disable-next-line no-console
+					console.error('[openrouter] error response:', res.status, JSON.stringify(errBody))
+					const message =
+						(errBody as { error?: { message?: string } } | undefined)?.error?.message ??
+						`HTTP ${res.status}`
+					const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)?.error?.metadata
+					throw new OpenRouterError({
+						code: res.status,
+						message,
+						body: errBody,
+						metadata,
+						retryAfterMs: parseRetryAfter(res.headers.get('Retry-After')),
+					})
+				}
 
-			const message =
-				(errBody as { error?: { message?: string } } | undefined)?.error?.message ?? `HTTP ${response.status}`
-			const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)?.error?.metadata
-			throw new OpenRouterError({
-				code: response.status,
-				message,
-				body: errBody,
-				metadata,
-				retryAfterMs: parseRetryAfter(response.headers.get('Retry-After')),
-			})
-		}
+				return res
+			},
+			{ budget, config, signal },
+		)
 
 		const json = (await response.json()) as CompletionsResponse
 		if (process.env.OPENROUTER_DEBUG) {
