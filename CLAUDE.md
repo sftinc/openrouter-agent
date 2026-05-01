@@ -50,7 +50,9 @@ Additional rules:
 
 When committing, ensure all changed and untracked files are staged and included in the commit.
 
-**Never push, release, or publish without being explicitly told to.** A user request to commit, refactor, fix, or implement is not a request to push. The release/publish task being part of an approved plan is not a standing authorization to chain through it. Pause and ask for explicit confirmation before each of: `npm run release`, `git push` (and `git push --follow-tags`), and `npm publish`. The user must specifically say push/release/publish (or equivalent) for that step. If the user authorizes one step, that does not extend to the others — confirm each.
+**Never push or release without being explicitly told to.** A user request to commit, refactor, fix, or implement is not a request to push. The release task being part of an approved plan is not a standing authorization to chain through it. Pause and ask for explicit confirmation before each of: `npm run release` and `git push` (or `git push --follow-tags`). The user must specifically say push or release (or equivalent) for that step. If the user authorizes one step, that does not extend to the other — confirm each.
+
+**Never run `npm publish` locally.** Publishing is handled automatically by `.github/workflows/publish.yml` when a `v*` tag is pushed. If you find yourself reaching for `npm publish` (or `npm publish --dry-run`), stop — the workflow is the only path to npm.
 
 ## Commit messages
 
@@ -63,40 +65,20 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope
 
 Breaking changes: add a `!` after the type (`feat!: ...`) or a `BREAKING CHANGE:` footer — this triggers a major bump.
 
-## Releasing
+## Releasing and publishing
 
-Versioning and `CHANGELOG.md` are automated by [`commit-and-tag-version`](https://github.com/absolute-version/commit-and-tag-version). Do **not** hand-edit `package.json` version or `CHANGELOG.md` — they are generated from commit history.
+The package is `@sftinc/openrouter-agent` on npmjs.com. The release flow has only two local steps; npm publish is handled by GitHub Actions on tag push.
 
-To cut a release:
+1. **`npm run release`** — `commit-and-tag-version` bumps `package.json` based on conventional-commit types since the last tag, prepends a new section to `CHANGELOG.md`, creates a `chore(release): X.Y.Z` commit, and tags it `vX.Y.Z`. Use `npm run release:minor` / `release:patch` to force a bump. Do **not** hand-edit `package.json` version or `CHANGELOG.md`.
+2. **`git push --follow-tags`** — pushes the release commit and the new tag. The `.github/workflows/publish.yml` workflow then runs `npm ci`, `npm run typecheck`, `npm test`, and `npm publish --provenance --access public` automatically.
 
-```bash
-npm run release            # auto-detects bump from commits since last tag
-npm run release:minor      # or force minor
-npm run release:patch      # or force patch
-git push --follow-tags     # push commits + the new version tag
-```
+**Start every release from a clean working tree.** `.versionrc.json` sets `commitAll: true`, so any unrelated staged or untracked changes get folded into the `chore(release): X.Y.Z` commit with a misleading message. Commit (or stash) unrelated work first.
 
-The release command bumps `package.json`, prepends a new section to `CHANGELOG.md`, creates a `chore(release): X.Y.Z` commit, and tags it `vX.Y.Z`.
+## "Push" always means release-then-push (when there are release-worthy commits)
 
-**Start every release from a clean working tree.** `.versionrc.json` sets `commitAll: true`, which means any unrelated staged or untracked changes get folded into the `chore(release): X.Y.Z` commit with a misleading message. Commit (or stash) unrelated work first.
-
-## Publishing to npm
-
-The package is published as `@sftinc/openrouter-agent` on npmjs.com. After a release is cut and pushed, ship the tarball:
-
-```bash
-npm publish --access public
-```
-
-`--access public` is required the first time a scoped package is published; after that the access flag is sticky and can be omitted. The `prepublishOnly` script runs `npm run build` automatically so `dist/` is always fresh in the published tarball.
-
-If you want to verify what will ship before publishing, run `npm publish --dry-run`.
-
-## "Push" always means release-then-push-then-publish
-
-When the user asks to push, run the release flow — never a bare `git push`:
+When the user asks to push:
 
 1. Check `git log <last-vX.Y.Z-tag>..HEAD` for commits since the last version tag.
-2. If any of those commits are release-worthy types (`feat`, `fix`, `perf`, `refactor`, `style`, `revert`) → run `npm run release`, then `git push --follow-tags`, then `npm publish` (ask before publishing if uncertain).
-3. If the only unreleased commits are hidden types (`docs`, `chore`, `test`, `build`, `ci`) or there are no new commits → just `git push` (no new version to cut, nothing to publish).
+2. If any commits are release-worthy types (`feat`, `fix`, `perf`, `refactor`, `style`, `revert`) → ask before each of: `npm run release`, then `git push --follow-tags`. The workflow publishes from the tag.
+3. If the only unreleased commits are hidden types (`docs`, `chore`, `test`, `build`, `ci`) or there are no new commits → just `git push` (nothing to release).
 4. If the user explicitly says "push without releasing" (or equivalent), honor that and run a bare `git push`.
