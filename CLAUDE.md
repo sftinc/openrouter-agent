@@ -50,6 +50,8 @@ Additional rules:
 
 When committing, ensure all changed and untracked files are staged and included in the commit.
 
+**Never push, release, or publish without being explicitly told to.** A user request to commit, refactor, fix, or implement is not a request to push. The release/publish task being part of an approved plan is not a standing authorization to chain through it. Pause and ask for explicit confirmation before each of: `npm run release`, `git push` (and `git push --follow-tags`), and `npm publish`. The user must specifically say push/release/publish (or equivalent) for that step. If the user authorizes one step, that does not extend to the others — confirm each.
+
 ## Commit messages
 
 Use [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <subject>`. The `type` drives how the change is grouped in the changelog and what kind of version bump it triggers:
