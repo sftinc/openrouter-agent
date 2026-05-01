@@ -201,10 +201,11 @@ describe("runLoop", () => {
 
     expect(seen).toHaveLength(1);
     const snap = seen[0] as any[];
-    expect(snap.map((m) => m.role)).toEqual(["user", "assistant"]);
+    // The in-flight assistant tool_use that invoked this tool must be stripped
+    // so the snapshot is always a valid conversation forwardable to any provider.
+    expect(snap.map((m) => m.role)).toEqual(["user"]);
     expect(snap.some((m) => m.role === "system")).toBe(false);
     expect(snap[0].content).toBe("hello there");
-    expect(snap[1].tool_calls?.[0].function.name).toBe("peek");
 
     // Mutating the snapshot must not affect the loop.
     snap.push({ role: "user", content: "MUTATION" });
