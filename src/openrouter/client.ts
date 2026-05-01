@@ -658,6 +658,116 @@ export class OpenRouterClient {
 	}
 
 	/**
+	 * POSTs a non-streaming embeddings request to
+	 * `${BASE_URL}/embeddings` and returns the parsed
+	 * {@link EmbedResponse}. OpenAI-compatible passthrough — the response is
+	 * returned faithfully without shape-shifting.
+	 *
+	 * Model precedence: `request.model` > `OpenRouterClientOptions.embedModel`.
+	 * Throws when neither is set — there is no package-level default for
+	 * embedding models.
+	 *
+	 * Connection-level retries follow the same policy as
+	 * {@link OpenRouterClient.complete} and
+	 * {@link OpenRouterClient.completeStream}. The 2xx
+	 * `response.json()` parse stays outside the retry loop — once a 200
+	 * body is in hand, retrying would re-charge the user.
+	 *
+	 * When `OPENROUTER_DEBUG` is set, the parsed response is logged to
+	 * stdout with the `[openrouter:embed]` prefix.
+	 *
+	 * @param request The embed request. `input` is required.
+	 * @param signalOrOptions Optional. Accepts either an `AbortSignal`
+	 *   (legacy form) or a {@link RequestOptions} object with
+	 *   `signal`/`retryBudget`/`retryConfig`.
+	 * @returns The parsed {@link EmbedResponse}.
+	 * @throws {Error} If neither `request.model` nor the client's
+	 *   `embedModel` is set.
+	 * @throws {OpenRouterError} On non-2xx responses after retry attempts
+	 *   are exhausted. Common codes: 400 (bad input), 401 (auth), 402
+	 *   (credits), 429 (rate limited), 503 (provider down).
+	 *
+	 * @example
+	 * ```ts
+	 * const res = await client.embed({
+	 *   model: 'qwen/qwen3-embedding-8b',
+	 *   input: ['hello', 'world'],
+	 *   dimensions: 1536,
+	 * })
+	 * const vectors = res.data.map((d) => d.embedding as number[])
+	 * ```
+	 */
+	async embed(
+		request: EmbedRequest,
+		signalOrOptions?: AbortSignal | RequestOptions,
+	): Promise<EmbedResponse> {
+		const model = request.model ?? this.embedModel
+		if (!model) {
+			throw new Error(
+				'No embedding model: set embedModel on OpenRouterClient or pass model on EmbedRequest.',
+			)
+		}
+
+		const opts: RequestOptions =
+			signalOrOptions instanceof AbortSignal
+				? { signal: signalOrOptions }
+				: (signalOrOptions ?? {})
+		const signal = opts.signal
+		const config = opts.retryConfig
+			? resolveRetryConfig({ ...this.retry, ...opts.retryConfig })
+			: this.retry
+		const budget = opts.retryBudget ?? createRetryBudget(config)
+
+		const headers = this.buildHeaders()
+		const body: Record<string, unknown> = {
+			model,
+			input: request.input,
+		}
+		if (request.dimensions !== undefined) body.dimensions = request.dimensions
+		if (request.encoding_format) body.encoding_format = request.encoding_format
+		if (request.input_type) body.input_type = request.input_type
+		if (request.user) body.user = request.user
+
+		const response = await withRetry(
+			async () => {
+				const res = await fetch(`${BASE_URL}/embeddings`, {
+					method: 'POST',
+					headers,
+					body: JSON.stringify(body),
+					signal,
+				})
+
+				if (!res.ok) {
+					const errBody = await this.safeParseJson(res)
+					// eslint-disable-next-line no-console
+					console.error('[openrouter:embed] error response:', res.status, JSON.stringify(errBody))
+					const message =
+						(errBody as { error?: { message?: string } } | undefined)?.error?.message ??
+						`HTTP ${res.status}`
+					const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)?.error?.metadata
+					throw new OpenRouterError({
+						code: res.status,
+						message,
+						body: errBody,
+						metadata,
+						retryAfterMs: parseRetryAfter(res.headers.get('Retry-After')),
+					})
+				}
+
+				return res
+			},
+			{ budget, config, signal },
+		)
+
+		const json = (await response.json()) as EmbedResponse
+		if (process.env.OPENROUTER_DEBUG) {
+			// eslint-disable-next-line no-console
+			console.log('[openrouter:embed] response:', JSON.stringify(json))
+		}
+		return json
+	}
+
+	/**
 	 * Best-effort JSON parse of an HTTP response body. Returns `undefined`
 	 * on any parse error so callers can surface the raw status without
 	 * throwing a secondary error.
