@@ -115,7 +115,7 @@ execute(args: Args, deps: ToolDeps): Promise<unknown>
 
 Source: `src/tool/Tool.ts:244`.
 
-Invoke the tool. Called by the agent loop after validating `args` against `Tool.inputSchema`. May return a string, a `ToolResult` shape, or any value (auto-wrapped as `{ content }`). Throwing or returning `{ error: string }` both signal failure to the loop. Errors thrown inside `execute` propagate to the loop, which converts them into a `tool:error` event and a `role: "tool"` error message appended to the conversation so the model can recover.
+Invoke the tool. Called by the agent loop after validating `args` against `Tool.inputSchema`. May return a string, a `ToolResult` shape, or any value (auto-wrapped as `{ content }`). Throwing or returning `{ error: string }` both signal failure to the loop. Errors thrown inside `execute` propagate to the loop, which converts them into a `tool:end` (error variant) event and a `role: "tool"` error message appended to the conversation so the model can recover.
 
 | Parameter | Type        | Required | Default | Description                                                                              |
 | --------- | ----------- | -------- | ------- | ---------------------------------------------------------------------------------------- |
@@ -124,7 +124,7 @@ Invoke the tool. Called by the agent loop after validating `args` against `Tool.
 
 **Returns:** `Promise<unknown>` — the raw tool output (later normalized to a `ToolResult` by the loop; see [Tool result coercion](#tool-result-coercion)).
 
-**Throws:** whatever the user-supplied `execute` function throws. The loop catches it and emits `tool:error`.
+**Throws:** whatever the user-supplied `execute` function throws. The loop catches it and emits `tool:end` (error variant).
 
 **Example:**
 
@@ -195,7 +195,7 @@ Construction-time configuration for a `Tool`. The generic `Args` captures the in
 | `description` | `string`                                              | yes      | —           | Natural-language description sent to the model.                                                                                      |
 | `inputSchema` | `z.ZodType<Args>`                                     | yes      | —           | Zod schema for validating arguments and generating JSON Schema.                                                                      |
 | `execute`     | `(args: Args, deps: ToolDeps) => Promise<unknown>`    | yes      | —           | The implementation. Receives validated `args` and `deps`. May return a string, an object, a `ToolResult`, or throw.                  |
-| `display`     | `ToolDisplayHooks<Args>`                              | no       | `undefined` | Optional UI hooks for `tool:start` / `tool:progress` / `tool:success` / `tool:error` events.                                         |
+| `display`     | `ToolDisplayHooks<Args>`                              | no       | `undefined` | Optional UI hooks (`start` / `progress` / `success` / `error`) that produce display fragments for the corresponding `tool:start`, `tool:progress`, and `tool:end` events. |
 
 **Producers:** the user, when constructing a `Tool`.
 **Consumers:** `new Tool(config)` (`src/tool/Tool.ts:220`).
@@ -223,7 +223,7 @@ const cfg: ToolConfig<{ city: string }> = {
 
 Source: `src/tool/Tool.ts:41`.
 
-Optional hooks that produce per-phase `EventDisplay` fragments for a tool. The agent loop calls the relevant hook when emitting a `tool:start`, `tool:progress`, `tool:success`, or `tool:error` event and merges the returned partial onto a base display object. A hook's return value is merged with the display-level `title` default; if the hook omits `title`, the default is used. **If neither supplies a title, no display is emitted for that phase.** All hooks are synchronous and must not throw — runtime errors inside a hook are swallowed by the loop's defensive wrapper rather than aborting the run.
+Optional hooks that produce per-phase `EventDisplay` fragments for a tool. The agent loop calls the relevant hook (`start`, `progress`, `success`, or `error`) when emitting a `tool:start`, `tool:progress`, or `tool:end` event (success or error variant) and merges the returned partial onto a base display object. A hook's return value is merged with the display-level `title` default; if the hook omits `title`, the default is used. **If neither supplies a title, no display is emitted for that phase.** All hooks are synchronous and must not throw — runtime errors inside a hook are swallowed by the loop's defensive wrapper rather than aborting the run.
 
 | Field      | Type                                                                                                          | Required | Default     | Description                                                                                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------------------------- | -------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -315,17 +315,17 @@ type ToolResult =
 | Field      | Type                          | Required | Default     | Description                                                                                                          |
 | ---------- | ----------------------------- | -------- | ----------- | -------------------------------------------------------------------------------------------------------------------- |
 | `content`  | `unknown`                     | yes      | —           | The success payload returned to the model. Any JSON-serializable value; non-string values are JSON-stringified at the wire boundary. |
-| `metadata` | `Record<string, unknown>`     | no       | `undefined` | Optional auxiliary data attached to the `tool:success` event. **Never** included in the message sent back to the model. |
+| `metadata` | `Record<string, unknown>`     | no       | `undefined` | Optional auxiliary data attached to the `tool:end` (success variant) event. **Never** included in the message sent back to the model. |
 
 ### Error arm
 
 | Field      | Type                          | Required | Default     | Description                                                                                                          |
 | ---------- | ----------------------------- | -------- | ----------- | -------------------------------------------------------------------------------------------------------------------- |
 | `error`    | `string`                      | yes      | —           | Human-readable failure message. Forwarded to the model in the `role: "tool"` reply (prefixed with `Error: `) so it can recover. |
-| `metadata` | `Record<string, unknown>`     | no       | `undefined` | Optional auxiliary data attached to the `tool:error` event. **Never** included in the message sent back to the model. |
+| `metadata` | `Record<string, unknown>`     | no       | `undefined` | Optional auxiliary data attached to the `tool:end` (error variant) event. **Never** included in the message sent back to the model. |
 
 **Producers:** user `execute` implementations (directly or via the [coercion](#tool-result-coercion) rules), or the agent loop itself when synthesizing `{ error: "tool \"X\" is not registered with this agent" }` for unknown tools (`src/agent/loop.ts:343`).
-**Consumers:** the loop's `tool:success` / `tool:error` event emitters (`src/agent/loop.ts:356-358, 365-377`) and the `buildToolResultMessage` / `buildToolErrorMessage` helpers (`src/lib/messages.ts:43, 74`) that produce the `role: "tool"` message.
+**Consumers:** the loop's `tool:end` event emitter — both success and error variants (`src/agent/loop.ts:356-358, 365-377`) — and the `buildToolResultMessage` / `buildToolErrorMessage` helpers (`src/lib/messages.ts:43, 74`) that produce the `role: "tool"` message.
 
 **Example literals:**
 
@@ -363,10 +363,10 @@ Unknown tool name (the model invented a tool not registered with the agent) is s
 
 After normalization:
 
-- **Success** — the loop builds a `role: "tool"` message via `buildToolResultMessage(toolCallId, content)` (`src/lib/messages.ts:43`). If `content` is a string it is sent verbatim; otherwise it is `JSON.stringify`'d (`src/lib/messages.ts:47`). A `tool:success` event is emitted carrying the same content plus `metadata`.
-- **Error** — the loop builds a `role: "tool"` message via `buildToolErrorMessage(toolCallId, error)` whose content is `` `Error: ${error}` `` (`src/lib/messages.ts:78`). A `tool:error` event is emitted carrying `error` and `metadata`. The loop then continues so the model can recover; it does not abort the run.
+- **Success** — the loop builds a `role: "tool"` message via `buildToolResultMessage(toolCallId, content)` (`src/lib/messages.ts:43`). If `content` is a string it is sent verbatim; otherwise it is `JSON.stringify`'d (`src/lib/messages.ts:47`). A `tool:end` event (success variant) is emitted carrying the same content plus `metadata`.
+- **Error** — the loop builds a `role: "tool"` message via `buildToolErrorMessage(toolCallId, error)` whose content is `` `Error: ${error}` `` (`src/lib/messages.ts:78`). A `tool:end` event (error variant) is emitted carrying `error` and `metadata`. The loop then continues so the model can recover; it does not abort the run.
 
-`metadata` is never written into the message sent back to the model; it is only attached to the corresponding `tool:success` / `tool:error` `AgentEvent`.
+`metadata` is never written into the message sent back to the model; it is only attached to the corresponding `tool:end` `AgentEvent` (success or error variant).
 
 ---
 
@@ -376,7 +376,7 @@ Argument validation and JSON Schema generation both run off of `Tool.inputSchema
 
 1. **JSON Schema generation.** `Tool.toOpenRouterTool()` (`src/tool/Tool.ts:261-271`) calls `z.toJSONSchema(this.inputSchema, { target: "draft-7" })` and embeds the result as the `function.parameters` object of the `OpenRouterTool` advertised to the model. The `draft-7` target is chosen because OpenAPI 3.0 (which OpenRouter's tool-parameter validator inherits from) is derived from JSON Schema draft-7; staying on that draft maximizes round-trip compatibility. **No caching** — the loop re-derives the JSON Schema once per request.
 
-2. **Runtime argument validation.** The loop parses the model's `tool_call.function.arguments` (a JSON string), then validates the parsed object with `inputSchema` before invoking `execute`. A validation failure short-circuits to a `tool:error` event and a `role: "tool"` error message; `execute` is not called.
+2. **Runtime argument validation.** The loop parses the model's `tool_call.function.arguments` (a JSON string), then validates the parsed object with `inputSchema` before invoking `execute`. A validation failure short-circuits to a `tool:end` (error variant) event and a `role: "tool"` error message; `execute` is not called.
 
 3. **No name validation in the SDK.** `Tool`'s constructor does not validate `name` or `description` (`src/tool/Tool.ts:213-215`); OpenRouter rejects malformed names server-side. Tool names should match `[A-Za-z0-9_-]+` and be unique within a single agent's tool set.
 

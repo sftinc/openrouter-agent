@@ -303,7 +303,7 @@ Source: `src/agent/events.ts:138-147`. Fires zero or more times per assistant tu
 | --- | --- | --- |
 | `type` | `"message:delta"` | Discriminator. |
 | `runId` | `string` | Run id this delta belongs to. |
-| `text` | `string` | Newly arrived text since the previous delta. |
+| `content` | `string` | Newly arrived text since the previous delta. |
 | `display` | `EventDisplay \| undefined` | Optional display payload (the loop itself does not populate this). |
 
 ### `message:preamble`
@@ -365,7 +365,7 @@ Source: `src/agent/events.ts:208-229`. Discriminate success vs failure with `"er
 | `runId` | `string` | Run id this tool call belongs to. |
 | `toolUseId` | `string` | Identifier matching the originating `tool:start`. |
 | `toolName` | `string` | Name of the tool as registered on the agent. Mirrors the value on the originating `tool:start` so `tool:end` is self-describing without a `toolUseId` lookup. |
-| `output` | `unknown` | Tool result content (the same value passed back to the model in the `tool` role message). |
+| `content` | `unknown` | Tool result content (the same value passed back to the model in the `tool` role message). |
 | `metadata` | `Record<string, unknown> \| undefined` | Optional structured metadata returned by the tool, surfaced for telemetry/UI. |
 | `display` | `EventDisplay \| undefined` | Resolved display payload from the tool's `success` hook, if any. |
 | `startedAt` | `number` | Wall-clock epoch ms when the originating `tool:start` was emitted. |
