@@ -331,13 +331,7 @@ export class OpenRouterClient {
 		// crossed at this layer because no chunks have been observed yet.
 		const response = await withRetry(
 			async () => {
-				const headers: Record<string, string> = {
-					Authorization: `Bearer ${this.apiKey}`,
-					'Content-Type': 'application/json',
-					Accept: 'text/event-stream',
-				}
-				if (this.referer) headers['HTTP-Referer'] = this.referer
-				if (this.title) headers['X-OpenRouter-Title'] = this.title
+				const headers = this.buildHeaders({ Accept: 'text/event-stream' })
 
 				const body = {
 					model: DEFAULT_MODEL,
@@ -432,6 +426,26 @@ export class OpenRouterClient {
 	}
 
 	/**
+	 * Build the transport headers for an OpenRouter request. All three call
+	 * sites (`complete`, `completeStream`, `embed`) route through this so any
+	 * future header (e.g. `OpenRouter-Organization`) lands in exactly one
+	 * place.
+	 *
+	 * @param extra Optional additional headers merged on top of the base set.
+	 *   Used by `completeStream` to add `Accept: text/event-stream`.
+	 */
+	private buildHeaders(extra?: Record<string, string>): Record<string, string> {
+		const headers: Record<string, string> = {
+			Authorization: `Bearer ${this.apiKey}`,
+			'Content-Type': 'application/json',
+			...extra,
+		}
+		if (this.referer) headers['HTTP-Referer'] = this.referer
+		if (this.title) headers['X-OpenRouter-Title'] = this.title
+		return headers
+	}
+
+	/**
 	 * POSTs a non-streaming chat completion to `${BASE_URL}/chat/completions`
 	 * and returns the parsed {@link CompletionsResponse}. The request is
 	 * sent with `stream: false`. For token-by-token SSE streaming use
@@ -454,12 +468,7 @@ export class OpenRouterClient {
 	 *   503 (upstream provider error).
 	 */
 	async complete(request: CompletionsRequest, signal?: AbortSignal): Promise<CompletionsResponse> {
-		const headers: Record<string, string> = {
-			Authorization: `Bearer ${this.apiKey}`,
-			'Content-Type': 'application/json',
-		}
-		if (this.referer) headers['HTTP-Referer'] = this.referer
-		if (this.title) headers['X-OpenRouter-Title'] = this.title
+		const headers = this.buildHeaders()
 
 		/**
 		 * Precedence: DEFAULT_MODEL fallback < client.defaults < per-request fields.

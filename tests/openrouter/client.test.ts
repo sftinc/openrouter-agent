@@ -74,6 +74,31 @@ describe("OpenRouterClient", () => {
     expect(headers["X-OpenRouter-Title"]).toBe("My App");
   });
 
+  test("completeStream includes the same auth + attribution headers as complete", async () => {
+    const body = `data: [DONE]\n\n`;
+    fetchSpy.mockResolvedValue(sseResponse(body));
+
+    const client = new OpenRouterClient({
+      apiKey: "sk-test",
+      referer: "https://example.com",
+      title: "My App",
+    });
+    await collectChunks(
+      client.completeStream({
+        model: "m",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    );
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer sk-test");
+    expect(headers["Content-Type"]).toBe("application/json");
+    expect(headers["HTTP-Referer"]).toBe("https://example.com");
+    expect(headers["X-OpenRouter-Title"]).toBe("My App");
+    expect(headers["Accept"]).toBe("text/event-stream");
+  });
+
   test("throws OpenRouterError on non-2xx responses", async () => {
     fetchSpy.mockResolvedValue(
       new Response(JSON.stringify({ error: { message: "Invalid API key" } }), {
