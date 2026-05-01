@@ -297,7 +297,7 @@ Source: `src/agent/events.ts:122-137`. Fires once, last, with the final `Result`
 
 ### `message:delta`
 
-Source: `src/agent/events.ts:138-147`. Fires zero or more times per assistant turn as text tokens arrive from the streaming transport. `text` carries only the **new** text since the previous delta — it is **not** a cumulative buffer (`src/agent/loop.ts:694-697`). Does not fire for tool-call argument deltas.
+Source: `src/agent/events.ts:138-147`. Fires zero or more times per assistant turn as text tokens arrive from the streaming transport. `content` carries only the **new** text since the previous delta — it is **not** a cumulative buffer (`src/agent/loop.ts:694-697`). Does not fire for tool-call argument deltas.
 
 | Field | Type | Description |
 | --- | --- | --- |
