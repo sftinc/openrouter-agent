@@ -147,10 +147,13 @@ export interface OpenRouterClientOptions extends LLMConfig {
 }
 
 /**
- * Options for {@link OpenRouterClient.completeStream}. Accepts either an
- * `AbortSignal` (legacy form) or an options object. The options object
- * lets callers share a {@link RetryBudget} across layers (the agent loop
- * does this) and override the {@link RetryConfig} per call.
+ * Options accepted as the second argument to {@link OpenRouterClient.complete},
+ * {@link OpenRouterClient.completeStream}, and {@link OpenRouterClient.embed}.
+ * Each method also accepts a bare `AbortSignal` for back-compat.
+ *
+ * Use the options form when you need to share a {@link RetryBudget} across
+ * layers (the agent loop does this) or override the {@link RetryConfig} per
+ * call.
  *
  * @example
  * ```ts
@@ -163,7 +166,7 @@ export interface OpenRouterClientOptions extends LLMConfig {
  * }
  * ```
  */
-export interface CompleteStreamOptions {
+export interface RequestOptions {
 	/** Cancellation signal. */
 	signal?: AbortSignal
 	/**
@@ -178,6 +181,13 @@ export interface CompleteStreamOptions {
 	 */
 	retryConfig?: RetryConfig
 }
+
+/**
+ * @deprecated Use {@link RequestOptions}. This alias exists so existing
+ * imports keep compiling for one minor cycle and will be removed in the
+ * next major.
+ */
+export type CompleteStreamOptions = RequestOptions
 
 /**
  * Base URL for the OpenRouter v1 API. All endpoints in this client are
@@ -277,7 +287,7 @@ export class OpenRouterClient {
 	 * @param request The completion request. `messages` is required;
 	 *   everything else may be omitted to inherit defaults.
 	 * @param signalOrOptions Optional. Accepts either an `AbortSignal`
-	 *   (legacy form) or a {@link CompleteStreamOptions} object with
+	 *   (legacy form) or a {@link RequestOptions} object with
 	 *   `signal`/`retryBudget`/`retryConfig`. Aborting cancels the
 	 *   underlying `fetch` and the SSE reader; the generator throws an
 	 *   `AbortError`.
@@ -303,9 +313,9 @@ export class OpenRouterClient {
 	 */
 	async *completeStream(
 		request: CompletionsRequest,
-		signalOrOptions?: AbortSignal | CompleteStreamOptions,
+		signalOrOptions?: AbortSignal | RequestOptions,
 	): AsyncGenerator<CompletionChunk, void, void> {
-		const opts: CompleteStreamOptions =
+		const opts: RequestOptions =
 			signalOrOptions instanceof AbortSignal
 				? { signal: signalOrOptions }
 				: (signalOrOptions ?? {})
