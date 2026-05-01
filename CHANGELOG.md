@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0](https://github.com/sftinc/openrouter-agent/compare/v1.1.2...v1.2.0) (2026-05-01)
+
+
+### Added
+
+* **openrouter:** add embedModel option to OpenRouterClient ([95c1220](https://github.com/sftinc/openrouter-agent/commit/95c1220d49af841c9d2a77f40eeb6c3237687cbb))
+* **openrouter:** add EmbedRequest and EmbedResponse types ([72fa5a0](https://github.com/sftinc/openrouter-agent/commit/72fa5a09a514ba47c5f6226032ed565d727c6bb2))
+* **openrouter:** add OpenRouterClient.embed() ([cae3762](https://github.com/sftinc/openrouter-agent/commit/cae376235ff860386bb6cad3c55ff8ab316cd30c))
+* **openrouter:** connection-level retry on complete() at parity with completeStream ([3290efb](https://github.com/sftinc/openrouter-agent/commit/3290efbf675922daee1f3efa79c94a6b6e6d0f1a))
+* **openrouter:** re-export RequestOptions, EmbedRequest, EmbedResponse ([8384435](https://github.com/sftinc/openrouter-agent/commit/8384435fe5de6a7a45b5b5457173fabf6235feb2))
+
+
+### Changed
+
+* **openrouter:** extract buildHeaders() shared by complete + completeStream ([acb5196](https://github.com/sftinc/openrouter-agent/commit/acb5196b6e9c1481fd37101261796905b4227df1))
+* **openrouter:** rename CompleteStreamOptions to RequestOptions ([a8f1615](https://github.com/sftinc/openrouter-agent/commit/a8f161511f1b4168090f8c751e0161d17a428778))
+
 ## [1.1.2](https://github.com/sftinc/openrouter-agent/compare/v1.1.1...v1.1.2) (2026-05-01)
 
 
