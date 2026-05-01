@@ -729,7 +729,19 @@ export async function runLoop(
     signal,
     runId,
     parentRunId,
-    getMessages: () => messages.slice(),
+    getMessages: () => {
+      const snap = messages.slice();
+      const last = snap[snap.length - 1];
+      // Strip the in-flight assistant tool_use that invoked this tool. Loop
+      // invariant: when a tool's execute runs, the trailing message is always
+      // the assistant message whose tool_calls invoked it (pushed just above
+      // before the tool-call dispatch loop). Forwarding the snapshot with
+      // that orphan tool_use crashes Anthropic re-prompts.
+      if (last?.role === "assistant" && last.tool_calls && last.tool_calls.length > 0) {
+        snap.pop();
+      }
+      return snap;
+    },
     context: options.context,
   };
 
