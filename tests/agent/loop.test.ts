@@ -213,6 +213,65 @@ describe("runLoop", () => {
     expect((second.messages as any[]).some((m) => m.content === "MUTATION")).toBe(false);
   });
 
+  test("deps.getMessages preserves prior completed tool turns and strips only the in-flight one", async () => {
+    const seen: any[] = [];
+    const tool = new Tool({
+      name: "peek",
+      description: "peek at messages",
+      inputSchema: z.object({}),
+      execute: async (_args, deps) => {
+        seen.push(deps.getMessages?.());
+        return "ok";
+      },
+    });
+    const client = {
+      completeStream: vi.fn()
+        // Turn 1: assistant calls peek
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
+            id: "gen-1",
+            finish_reason: "tool_calls",
+            content: null,
+            tool_calls: [
+              { id: "c1", type: "function", function: { name: "peek", arguments: "{}" } },
+            ],
+          }))
+        )
+        // Turn 2: assistant calls peek again
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
+            id: "gen-2",
+            finish_reason: "tool_calls",
+            content: null,
+            tool_calls: [
+              { id: "c2", type: "function", function: { name: "peek", arguments: "{}" } },
+            ],
+          }))
+        )
+        // Turn 3: assistant emits final text
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({ id: "gen-3", content: "done" }))
+        ),
+    };
+    const cfg = mkConfig({ tools: [tool], openrouter: client as any });
+
+    await runLoop(cfg, "hi", {}, () => {});
+
+    expect(seen).toHaveLength(2);
+
+    // First call: only the user message survives the strip.
+    const snap1 = seen[0] as any[];
+    expect(snap1.map((m) => m.role)).toEqual(["user"]);
+
+    // Second call: the prior completed turn (assistant tool_use + tool result)
+    // is preserved; only the in-flight assistant tool_use for THIS call is stripped.
+    const snap2 = seen[1] as any[];
+    expect(snap2.map((m) => m.role)).toEqual(["user", "assistant", "tool"]);
+    expect(snap2[1].tool_calls?.[0].id).toBe("c1");
+    expect(snap2[2].tool_call_id).toBe("c1");
+    expect(snap2[2].content).toBe("ok");
+  });
+
   test("tool handler throws surface as error on tool:end and loop continues", async () => {
     const events: AgentEvent[] = [];
     const tool = new Tool({
