@@ -144,6 +144,13 @@ export interface OpenRouterClientOptions extends LLMConfig {
 	 * the second argument to `completeStream` are also supported.
 	 */
 	retry?: RetryConfig
+	/**
+	 * Default embedding model used by {@link OpenRouterClient.embed} when
+	 * `EmbedRequest.model` is omitted. There is **no** package-level default
+	 * for embeddings — if neither this field nor the request specifies a
+	 * model, `embed()` throws.
+	 */
+	embedModel?: string
 }
 
 /**
@@ -227,6 +234,8 @@ export class OpenRouterClient {
 	private readonly defaults: LLMConfig
 	/** Resolved retry policy. Always a fully-populated config (no `undefined` fields). */
 	private readonly retry: ReturnType<typeof resolveRetryConfig>
+	/** Default embedding model. Used by `embed()` when the request omits `model`. */
+	private readonly embedModel?: string
 
 	/**
 	 * Build a client. Pulls the API key from the options first, then from
@@ -242,7 +251,7 @@ export class OpenRouterClient {
 	 * @throws {Error} If no API key is available from either source.
 	 */
 	constructor(options: OpenRouterClientOptions) {
-		const { apiKey, title, referer, retry, ...llmDefaults } = options
+		const { apiKey, title, referer, retry, embedModel, ...llmDefaults } = options
 		const envKey = typeof process !== 'undefined' ? process.env?.OPENROUTER_API_KEY : undefined
 		const key = apiKey ?? envKey
 		if (!key) {
@@ -253,6 +262,7 @@ export class OpenRouterClient {
 		this.referer = referer
 		this.defaults = llmDefaults
 		this.retry = resolveRetryConfig(retry)
+		this.embedModel = embedModel
 	}
 
 	/**
