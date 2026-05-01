@@ -24,6 +24,9 @@ import {
   type CompletionsRequest,
   type CompletionsResponse,
   type RetryConfig,
+  type EmbedRequest,
+  type EmbedResponse,
+  type RequestOptions,
 } from "@sftinc/openrouter-agent";
 ```
 
@@ -98,13 +101,18 @@ class OpenRouterClient {
 
   complete(
     request: CompletionsRequest,
-    signal?: AbortSignal
+    signalOrOptions?: AbortSignal | RequestOptions
   ): Promise<CompletionsResponse>;
 
   completeStream(
     request: CompletionsRequest,
-    signal?: AbortSignal
+    signalOrOptions?: AbortSignal | RequestOptions
   ): AsyncGenerator<CompletionChunk, void, void>;
+
+  embed(
+    request: EmbedRequest,
+    signalOrOptions?: AbortSignal | RequestOptions
+  ): Promise<EmbedResponse>;
 }
 ```
 
@@ -143,7 +151,7 @@ POSTs a non-streaming chat completion and resolves to a parsed `CompletionsRespo
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `request` | `CompletionsRequest` | yes | — | The completion request body. `messages` is required; everything else may be omitted to inherit defaults. |
-| `signal` | `AbortSignal` | no | `undefined` | Cancels the underlying `fetch`; rejection surfaces as the standard `fetch` `AbortError`. |
+| `signalOrOptions` | `AbortSignal \| RequestOptions` | no | `undefined` | Cancellation/options. Bare `AbortSignal` form is supported for back-compat; the object form lets you share a `RetryBudget` and override `RetryConfig` per call. |
 
 #### Body precedence (lowest → highest)
 
@@ -170,6 +178,10 @@ POSTs a non-streaming chat completion and resolves to a parsed `CompletionsRespo
 - Logs the parsed response to stdout when `process.env.OPENROUTER_DEBUG` is set (yellow if it contains tool calls; `src/openrouter/client.ts:367-374`).
 - Logs error responses to stderr (`src/openrouter/client.ts:352-353`).
 
+#### Retry behavior
+
+Connection-level retries are now at parity with `completeStream`: retryable HTTP statuses (`408`, `429`, `500`, `502`, `503`, `504`) and `fetch` rejections are retried with exponential-jittered backoff under the same `RetryConfig` and shared `RetryBudget`. The 2xx `response.json()` parse stays outside the retry loop so a successful response is never re-charged.
+
 #### Example
 
 ```ts
@@ -195,7 +207,7 @@ POSTs a streaming chat completion and yields parsed SSE `CompletionChunk` values
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `request` | `CompletionsRequest` | yes | — | The completion request body. `messages` is required. |
-| `signal` | `AbortSignal` | no | `undefined` | Aborting cancels both the underlying `fetch` and the SSE reader; the generator throws an `AbortError`. |
+| `signalOrOptions` | `AbortSignal \| RequestOptions` | no | `undefined` | Cancellation/options. Bare `AbortSignal` form is supported for back-compat; the object form lets you share a `RetryBudget` and override `RetryConfig` per call. |
 
 #### Body precedence (lowest → highest)
 
@@ -241,6 +253,61 @@ for await (const chunk of client.completeStream({
 ```
 
 See also: `OpenRouterError`, `CompletionsRequest`, `CompletionsResponse`, `CompletionChunk`, `parseSseStream`.
+
+### Method: `embed`
+
+POSTs a non-streaming embeddings request to `${BASE_URL}/embeddings` and resolves to a parsed `EmbedResponse`.
+
+#### Parameters
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `request` | `EmbedRequest` | yes | — | The embed request body. `input` is required. `model` falls back to `OpenRouterClient.embedModel` if set. |
+| `signalOrOptions` | `AbortSignal \| RequestOptions` | no | `undefined` | Cancellation/options. Bare `AbortSignal` is supported for back-compat. |
+
+#### Model precedence
+
+1. `request.model` (highest);
+2. `OpenRouterClient.embedModel` (constructor option);
+3. **No package-level default.** `embed()` throws `Error("No embedding model: ...")` when neither is set.
+
+#### Returns
+
+`Promise<EmbedResponse>`.
+
+#### Throws
+
+- `Error` — when neither `request.model` nor the client's `embedModel` is set.
+- `OpenRouterError` — on any non-2xx response after retries. Common codes: `400` (bad input/dimensions unsupported), `401` (auth), `402` (credits), `429` (rate limited), `503` (provider down).
+
+#### Side effects
+
+- Logs error responses to stderr with the `[openrouter:embed] error response:` prefix.
+- Logs the parsed response to stdout with the `[openrouter:embed] response:` prefix when `process.env.OPENROUTER_DEBUG` is set.
+
+#### Retry behavior
+
+Same connection-level retry semantics as `complete` and `completeStream`. The 2xx JSON parse stays outside the retry loop so a successful embedding is never re-charged.
+
+#### Example
+
+```ts
+import { OpenRouterClient } from "@sftinc/openrouter-agent";
+
+const client = new OpenRouterClient({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  embedModel: "qwen/qwen3-embedding-8b",
+});
+
+const res = await client.embed({
+  input: ["hello", "world"],
+  dimensions: 1536,
+});
+
+const vectors = res.data.map((d) => d.embedding as number[]);
+```
+
+See also: `EmbedRequest`, `EmbedResponse`, `OpenRouterError`, `RequestOptions`.
 
 ---
 
@@ -345,6 +412,7 @@ Constructor argument for `OpenRouterClient`. Extends `LLMConfig` (so every LLM k
 | `apiKey` | `string` | no | `process.env.OPENROUTER_API_KEY` | OpenRouter API key. The constructor throws if neither this nor the env var is set. |
 | `title` | `string` | no | `undefined` | Human-readable site/app name, sent as the `X-OpenRouter-Title` header for OpenRouter rankings/attribution. |
 | `referer` | `string` | no | `undefined` | Referer URL, sent as the `HTTP-Referer` header for OpenRouter rankings/attribution. |
+| `embedModel` | `string` | no | `undefined` | Default embedding model used by `embed()` when `EmbedRequest.model` is omitted. No package-level default — `embed()` throws if neither is set. |
 | …all `LLMConfig` fields | see `LLMConfig` | no | — | Used as per-client defaults on every request body. Stripped of `apiKey`/`title`/`referer` before being merged. |
 
 ### Example
@@ -567,6 +635,68 @@ See also: `CompletionsRequest`, `NonStreamingChoice`, `Annotation`, `Usage`.
 
 ---
 
+## `EmbedRequest`
+
+Body POSTed to `/embeddings`. OpenAI-compatible passthrough; `model` is optional because it falls back through `OpenRouterClient.embedModel`. Source: `src/openrouter/client.ts`.
+
+### Fields
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `model` | `string` | no | `OpenRouterClient.embedModel` | Embedding model id. Throws if neither this nor the client default is set — there is no package-level default. |
+| `input` | `string \| string[]` | yes | — | Text(s) to embed. Multimodal and token-id inputs are valid upstream but deliberately excluded from this type for v1; widening later is non-breaking. |
+| `dimensions` | `number` | no | provider default | Output dimensionality. Rejected by models that do not support it. |
+| `encoding_format` | `"float" \| "base64"` | no | `"float"` | `"base64"` returns each vector as a base64 string. |
+| `input_type` | `string` | no | none | Provider-specific classification (e.g. Cohere `"search_query"`/`"search_document"`/`"classification"`/`"clustering"`, Voyage `"query"`/`"document"`). Open-typed deliberately. |
+| `user` | `string` | no | none | End-user identifier forwarded to the provider. |
+
+### Example
+
+```ts
+const req: EmbedRequest = {
+  model: "qwen/qwen3-embedding-8b",
+  input: ["a", "b"],
+  dimensions: 1536,
+};
+```
+
+See also: `OpenRouterClient.embed`, `EmbedResponse`.
+
+---
+
+## `EmbedResponse`
+
+Parsed response from `OpenRouterClient.embed`. Faithful to the OpenRouter (OpenAI-compatible) embeddings response — `cost` and `prompt_tokens_details` are inconsistently populated and so are typed as optional, mirroring how `CompletionsResponse` handles partial provider support. Source: `src/openrouter/client.ts`.
+
+### Fields
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `id` | `string` | yes | — | Server-assigned response id. |
+| `object` | `"list"` | yes | — | Object discriminator. |
+| `model` | `string` | yes | — | The model that actually served the request. |
+| `data` | `Array<{ object: "embedding"; index: number; embedding: number[] \| string }>` | yes | — | One entry per input, index-aligned. `embedding` is `number[]` for `encoding_format: "float"` (default), `string` for `"base64"`. Discriminate with `typeof embedding === "string"`. |
+| `usage.prompt_tokens` | `number` | yes | — | Input token count. |
+| `usage.total_tokens` | `number` | yes | — | Same as `prompt_tokens` for embeddings. |
+| `usage.cost` | `number` | no | — | Credit cost. Some providers report it, others omit. |
+| `usage.prompt_tokens_details` | `{ cached_tokens?: number; [key: string]: number \| undefined }` | no | — | Per-modality / cache breakdown. |
+
+### Example
+
+```ts
+const res = await client.embed({ model: "m", input: "hi" });
+const vec = res.data[0].embedding;
+if (typeof vec === "string") {
+  // base64 — only when encoding_format was "base64"
+} else {
+  // float vector — the default
+}
+```
+
+See also: `EmbedRequest`, `OpenRouterClient.embed`.
+
+---
+
 ## `NonStreamingChoice`
 
 A single completion choice from `CompletionsResponse.choices`. Field-by-field documented in the table above under `CompletionsResponse`. Source: `src/openrouter/types.ts:287-310`.
@@ -783,6 +913,26 @@ class IdleTimeoutError extends Error {
 | `idleMs` | `number` | The configured idle window that elapsed without a chunk. |
 
 `defaultIsRetryable` returns `true` for this error.
+
+### `RequestOptions`
+
+Options accepted as the second argument to `OpenRouterClient.complete`, `completeStream`, and `embed`. Each method also accepts a bare `AbortSignal` for back-compat.
+
+```ts
+export interface RequestOptions {
+  signal?: AbortSignal;
+  retryBudget?: RetryBudget;
+  retryConfig?: Partial<RetryConfig>;
+}
+```
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `signal` | `AbortSignal` | no | `undefined` | Cancellation signal. |
+| `retryBudget` | `RetryBudget` | no | newly allocated | Shared budget so the loop layer's stream-level retries do not compound with connection-level retries. |
+| `retryConfig` | `Partial<RetryConfig>` | no | inherits from client | Per-call override merged on top of the client's resolved config. |
+
+`CompleteStreamOptions` is a deprecated alias for `RequestOptions` — kept for one minor cycle, removed at the next major.
 
 ### Example: per-Agent retry override
 
