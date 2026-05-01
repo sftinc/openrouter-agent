@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2](https://github.com/sftinc/openrouter-agent/compare/v1.1.1...v1.1.2) (2026-05-01)
+
+
+### Fixed
+
+* handle parallel tool calls in deps.getMessages snapshot ([da6efb4](https://github.com/sftinc/openrouter-agent/commit/da6efb47ba12775a6704e7a2233c94df8db29de5))
+* log error response body in completeStream non-2xx path ([83489d5](https://github.com/sftinc/openrouter-agent/commit/83489d5255c2f1fd81cab664362dfc9d7383cbd5))
+* strip in-flight tool_use from deps.getMessages() snapshot ([9e5759a](https://github.com/sftinc/openrouter-agent/commit/9e5759a96f3a24c27b7c6e9418cd880292fe4ee8))
+
 ## [1.1.1](https://github.com/sftinc/openrouter-agent/compare/v1.1.0...v1.1.1) (2026-04-30)
 
 
