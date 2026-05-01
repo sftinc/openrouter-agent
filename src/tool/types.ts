@@ -120,13 +120,24 @@ export interface ToolDeps {
   parentRunId?: string;
   /**
    * Snapshot of the loop's in-memory messages at the moment of the call:
-   * prior session history, the user input, and every assistant/tool message
-   * produced earlier in this run — including the assistant message whose
-   * tool_call invoked this tool. The system prompt is never included; it is
-   * only injected at the OpenRouter wire boundary. Returns a fresh array each
-   * call; mutating it does not affect the loop.
+   * prior session history, the user input, and every completed
+   * assistant/tool turn produced earlier in this run.
    *
-   * @returns A defensive copy of the conversation visible to this tool call.
+   * The assistant message currently invoking this tool is excluded so the
+   * snapshot is always a valid conversation that can be forwarded to any
+   * LLM provider (Anthropic in particular rejects an unmatched `tool_use`
+   * block, which would otherwise occur because the in-flight tool has no
+   * `tool_result` yet — it _is_ the result). For parallel tool calls in a
+   * batch, sibling tools' results are also excluded so the snapshot stays
+   * a valid conversation; tools that need their own invocation context
+   * receive it via `Tool.execute`'s validated `args` parameter.
+   *
+   * The system prompt is never included; it is only injected at the
+   * OpenRouter wire boundary. Returns a fresh array each call; mutating it
+   * does not affect the loop.
+   *
+   * @returns A defensive copy of the conversation visible to this tool
+   *   call, ending at the last completed turn.
    */
   getMessages?: () => Message[];
   /**
