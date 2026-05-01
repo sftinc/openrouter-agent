@@ -147,6 +147,9 @@ export type {
   CompletionsRequest,
   CompletionsResponse,
   RetryConfig,
+  RequestOptions,
+  EmbedRequest,
+  EmbedResponse,
 } from "./openrouter/index.js";
 /**
  * Tool layer.

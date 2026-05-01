@@ -40,7 +40,13 @@ export { DEFAULT_MODEL } from "./types.js";
 export { OpenRouterClient, OpenRouterError } from "./client.js";
 
 /** Constructor options for {@link OpenRouterClient}. */
-export type { OpenRouterClientOptions } from "./client.js";
+export type {
+  OpenRouterClientOptions,
+  RequestOptions,
+  CompleteStreamOptions,
+  EmbedRequest,
+  EmbedResponse,
+} from "./client.js";
 
 /**
  * Project-singleton helpers for sharing one {@link OpenRouterClient} across
