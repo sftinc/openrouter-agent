@@ -138,10 +138,11 @@ export interface OpenRouterClientOptions extends LLMConfig {
 	 */
 	referer?: string
 	/**
-	 * Optional retry policy. Applied to {@link OpenRouterClient.completeStream}
+	 * Optional retry policy. Applied to {@link OpenRouterClient.complete},
+	 * {@link OpenRouterClient.completeStream}, and {@link OpenRouterClient.embed}
 	 * connection-level failures (`fetch` rejections, retryable HTTP statuses).
 	 * Defaults to `DEFAULT_RETRY_CONFIG` when omitted. Per-call overrides via
-	 * the second argument to `completeStream` are also supported.
+	 * the second argument to each method are also supported.
 	 */
 	retry?: RetryConfig
 	/**

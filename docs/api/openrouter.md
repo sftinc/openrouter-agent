@@ -922,7 +922,7 @@ Options accepted as the second argument to `OpenRouterClient.complete`, `complet
 export interface RequestOptions {
   signal?: AbortSignal;
   retryBudget?: RetryBudget;
-  retryConfig?: Partial<RetryConfig>;
+  retryConfig?: RetryConfig;
 }
 ```
 
@@ -930,7 +930,7 @@ export interface RequestOptions {
 | --- | --- | --- | --- | --- |
 | `signal` | `AbortSignal` | no | `undefined` | Cancellation signal. |
 | `retryBudget` | `RetryBudget` | no | newly allocated | Shared budget so the loop layer's stream-level retries do not compound with connection-level retries. |
-| `retryConfig` | `Partial<RetryConfig>` | no | inherits from client | Per-call override merged on top of the client's resolved config. |
+| `retryConfig` | `RetryConfig` | no | inherits from client | Per-call override merged field-by-field on top of the client's resolved config. |
 
 `CompleteStreamOptions` is a deprecated alias for `RequestOptions` — kept for one minor cycle, removed at the next major.
 
