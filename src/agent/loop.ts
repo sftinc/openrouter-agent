@@ -699,7 +699,9 @@ export async function runLoop(
   // Index of the assistant message currently invoking a tool batch. Set to the
   // messages-array index of the invoking assistant message just before the
   // tool-call dispatch loop and reset to -1 afterward. Shared across all
-  // parallel tool calls so every sibling receives an identical strip.
+  // sibling tool calls in the batch (dispatched sequentially, but issued by
+  // the model as one parallel batch) so every sibling receives an identical
+  // strip regardless of how many earlier siblings have already pushed results.
   let inflightAssistantIdx = -1;
 
   const deps: ToolDeps = {
