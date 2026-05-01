@@ -345,6 +345,8 @@ export class OpenRouterClient {
 
 				if (!res.ok) {
 					const errBody = await this.safeParseJson(res)
+					// eslint-disable-next-line no-console
+					console.error('[openrouter:stream] error response:', res.status, JSON.stringify(errBody))
 					const message =
 						(errBody as { error?: { message?: string } } | undefined)?.error?.message ??
 						`HTTP ${res.status}`
