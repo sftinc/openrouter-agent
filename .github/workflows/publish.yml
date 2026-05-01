@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 jobs:
   publish:
@@ -28,6 +29,22 @@ jobs:
 
       - run: npm test
 
-      - run: npm publish --provenance --access public
+      - name: Publish to npmjs.com
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Re-run setup-node to swap the registry to GitHub Packages.
+      # The package scope (@sftinc) matches the repo owner, so no rename
+      # is needed. NODE_AUTH_TOKEN switches to GITHUB_TOKEN, which is
+      # auto-provided by Actions and scoped by `permissions.packages: write`.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@sftinc"
+
+      - name: Publish to GitHub Packages
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
