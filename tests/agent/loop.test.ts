@@ -272,6 +272,45 @@ describe("runLoop", () => {
     expect(snap2[2].content).toBe("ok");
   });
 
+  test("parallel tool calls in one assistant message: each tool's snapshot strips the same shared invoking message", async () => {
+    const seen: any[] = [];
+    const tool = new Tool({
+      name: "peek",
+      description: "peek at messages",
+      inputSchema: z.object({ which: z.string() }),
+      execute: async (_args, deps) => {
+        seen.push(deps.getMessages?.());
+        return "ok";
+      },
+    });
+    const client = {
+      completeStream: vi.fn()
+        // One assistant turn with two parallel tool_calls
+        .mockImplementationOnce(() =>
+          mockStream(mockChunks({
+            id: "gen-1",
+            finish_reason: "tool_calls",
+            content: null,
+            tool_calls: [
+              { id: "p1", type: "function", function: { name: "peek", arguments: '{"which":"a"}' } },
+              { id: "p2", type: "function", function: { name: "peek", arguments: '{"which":"b"}' } },
+            ],
+          }))
+        )
+        // Final assistant text turn
+        .mockImplementationOnce(() => mockStream(mockChunks({ id: "gen-2", content: "done" }))),
+    };
+    const cfg = mkConfig({ tools: [tool], openrouter: client as any });
+
+    await runLoop(cfg, "hi", {}, () => {});
+
+    // Both parallel calls observe the snapshot. Each should see the same
+    // strip applied — the shared assistant invoking message removed.
+    expect(seen).toHaveLength(2);
+    expect(seen[0].map((m: any) => m.role)).toEqual(["user"]);
+    expect(seen[1].map((m: any) => m.role)).toEqual(["user"]);
+  });
+
   test("tool handler throws surface as error on tool:end and loop continues", async () => {
     const events: AgentEvent[] = [];
     const tool = new Tool({

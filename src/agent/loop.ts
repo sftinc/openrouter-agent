@@ -696,6 +696,12 @@ export async function runLoop(
   let stopReason: Result["stopReason"] | null = null;
   let error: Result["error"];
 
+  // Index of the assistant message currently invoking a tool batch. Set to the
+  // messages-array index of the invoking assistant message just before the
+  // tool-call dispatch loop and reset to -1 afterward. Shared across all
+  // parallel tool calls so every sibling receives an identical strip.
+  let inflightAssistantIdx = -1;
+
   const deps: ToolDeps = {
     complete: async (msgs, opts) => {
       let content = "";
@@ -730,17 +736,18 @@ export async function runLoop(
     runId,
     parentRunId,
     getMessages: () => {
-      const snap = messages.slice();
-      const last = snap[snap.length - 1];
-      // Strip the in-flight assistant tool_use that invoked this tool. Loop
-      // invariant: when a tool's execute runs, the trailing message is always
-      // the assistant message whose tool_calls invoked it (pushed just above
-      // before the tool-call dispatch loop). Forwarding the snapshot with
-      // that orphan tool_use crashes Anthropic re-prompts.
-      if (last?.role === "assistant" && last.tool_calls && last.tool_calls.length > 0) {
-        snap.pop();
+      // Strip the in-flight assistant tool_use and any partial tool-result
+      // messages accumulated so far in the same batch. inflightAssistantIdx is
+      // set to the exact index of the invoking assistant message before the
+      // first sibling tool runs and remains fixed for every parallel sibling.
+      // Truncating at that index ensures every parallel call receives the same
+      // snapshot (everything up to but not including the invoking assistant
+      // message), regardless of how many sibling results have already been
+      // appended by earlier tools in the batch.
+      if (inflightAssistantIdx >= 0) {
+        return messages.slice(0, inflightAssistantIdx);
       }
-      return snap;
+      return messages.slice();
     },
     context: options.context,
   };
@@ -917,10 +924,12 @@ export async function runLoop(
       break;
     }
 
+    inflightAssistantIdx = messages.length - 1;
     for (const toolCall of assembledToolCalls) {
       const toolMessage = await executeToolCall(toolCall, toolByName, deps, runId, emit);
       messages.push(toolMessage);
     }
+    inflightAssistantIdx = -1;
 
     // Loop continues for next turn.
   }
