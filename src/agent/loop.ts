@@ -176,7 +176,7 @@ function zeroUsage(): Usage {
 
 /**
  * Sum two {@link Usage} values, merging structured detail records and
- * carrying through optional fields (`cost`, `is_byok`, `*_details`).
+ * carrying through optional fields (`cost`, `*_details`).
  *
  * @param a The running total. Returned unchanged if `b` is `undefined`.
  * @param b The increment to add. May be `undefined` (no-op).
@@ -195,7 +195,9 @@ function addUsage(a: Usage, b: Usage | undefined): Usage {
     completion_tokens_details: mergeNumericRecords(a.completion_tokens_details, b.completion_tokens_details),
     server_tool_use: mergeNumericRecords(a.server_tool_use, b.server_tool_use),
     cost_details: mergeNumericRecords(a.cost_details, b.cost_details),
-    is_byok: b.is_byok ?? a.is_byok,
+    // is_byok intentionally omitted: it is a per-call boolean and any
+    // aggregation rule is lossy on mixed runs. Per-entry
+    // `usageLog[i].usage.is_byok` remains accurate.
   };
 }
 

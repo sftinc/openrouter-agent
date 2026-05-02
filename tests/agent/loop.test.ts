@@ -1165,7 +1165,9 @@ describe("Usage accumulation — multimodal & cost", () => {
     expect(end.result.usage.completion_tokens_details?.image_tokens).toBe(4);
     expect((end.result.usage as any).cost_details?.upstream_inference_prompt_cost).toBeCloseTo(0.04);
     expect((end.result.usage as any).cost_details?.upstream_inference_completions_cost).toBeCloseTo(0.03);
-    expect((end.result.usage as any).is_byok).toBe(true);
+    // is_byok is not aggregated into result.usage (it is a per-call boolean);
+    // per-entry values are available in usageLog once populated
+    expect((end.result.usage as any).is_byok).toBeUndefined();
   });
 
   describe("agent display merging", () => {

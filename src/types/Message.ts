@@ -268,8 +268,10 @@ export interface Usage {
     upstream_inference_completions_cost?: number;
   };
   /**
-   * Whether the call was billed to the user's BYOK provider key. Reflects the
-   * most recent call in this run.
+   * Whether this specific call was billed to the user's BYOK provider key.
+   * This field is **not** aggregated into `Result.usage`; consult per-entry
+   * `usageLog[i].usage.is_byok` for the per-call value, since aggregating
+   * a per-call boolean across a multi-call run is lossy.
    */
   is_byok?: boolean;
 }
