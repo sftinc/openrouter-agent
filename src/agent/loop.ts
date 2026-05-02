@@ -707,11 +707,12 @@ export async function runLoop(
   // strip regardless of how many earlier siblings have already pushed results.
   let inflightAssistantIdx = -1;
 
-  const deps: ToolDeps = {
+  const buildToolDeps = (toolCallId: string, toolName: string): ToolDeps => ({
     complete: async (msgs, opts) => {
       let content = "";
       const toolBuf = new Map<number, ToolCallDelta>();
       let u: Usage | undefined;
+      let genId: string | null = null;
       for await (const chunk of config.openrouter.completeStream(
         {
           ...overrides,
@@ -721,6 +722,7 @@ export async function runLoop(
         },
         signal
       )) {
+        if (!genId && chunk.id) genId = chunk.id;
         if (chunk.usage) u = chunk.usage;
         const sc = chunk.choices[0];
         if (!sc) continue;
@@ -730,6 +732,18 @@ export async function runLoop(
         }
       }
       const tool_calls = assembleToolCalls(toolBuf);
+      if (u) {
+        usage = addUsage(usage, u);
+        usageLog.push({
+          source: "tool",
+          runId,
+          parentRunId,
+          generationId: genId ?? undefined,
+          toolUseId: toolCallId,
+          toolName,
+          usage: u,
+        });
+      }
       return {
         content: content.length > 0 ? content : null,
         usage: u ?? zeroUsage(),
@@ -755,7 +769,7 @@ export async function runLoop(
       return messages.slice();
     },
     context: options.context,
-  };
+  });
 
   // Resolve retry config once for the whole run; per-turn budgets are
   // allocated fresh inside the loop.
@@ -940,7 +954,8 @@ export async function runLoop(
 
     inflightAssistantIdx = messages.length - 1;
     for (const toolCall of assembledToolCalls) {
-      const toolMessage = await executeToolCall(toolCall, toolByName, deps, runId, emit);
+      const perToolDeps = buildToolDeps(toolCall.id, toolCall.function.name);
+      const toolMessage = await executeToolCall(toolCall, toolByName, perToolDeps, runId, emit);
       messages.push(toolMessage);
     }
     inflightAssistantIdx = -1;
