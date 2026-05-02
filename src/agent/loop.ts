@@ -769,6 +769,8 @@ export async function runLoop(
     },
     embed: async (request) => {
       const response = await config.openrouter.embed(request, signal);
+      // Embeddings produce no completion tokens; surface as 0 so the
+      // sum-of-entries invariant on Result.usage holds field-by-field.
       const u: Usage = {
         prompt_tokens: response.usage.prompt_tokens,
         completion_tokens: 0,
@@ -781,6 +783,7 @@ export async function runLoop(
         source: "embed",
         runId,
         parentRunId,
+        generationId: response.id || undefined,
         toolUseId: toolCallId,
         toolName,
         model: response.model,
