@@ -325,3 +325,66 @@ describe("flattenUsageLog", () => {
     expect(flat.reduce((s, e) => s + e.usage.total_tokens, 0)).toBe(20);
   });
 });
+
+describe("usageLog — invariant", () => {
+  beforeEach(() => {
+    process.env.OPENROUTER_API_KEY = "sk-test";
+  });
+  afterEach(() => {
+    delete process.env.OPENROUTER_API_KEY;
+  });
+
+  test("Result.usage equals sum of usageLog entry usages, field by field", async () => {
+    const innerClient = new OpenRouterClient({ apiKey: "test" });
+    vi.spyOn(innerClient, "completeStream").mockImplementation(async function* () {
+      yield {
+        id: "gen_i",
+        choices: [{ delta: { content: "x" }, finish_reason: "stop" }],
+        usage: {
+          prompt_tokens: 5, completion_tokens: 5, total_tokens: 10, cost: 0.001,
+          completion_tokens_details: { reasoning_tokens: 1 },
+        },
+      } as any;
+    });
+    const inner = new Agent({ name: "inner", description: "d", systemPrompt: "s", client: { model: "x" } });
+    (inner as unknown as { openrouter: OpenRouterClient }).openrouter = innerClient;
+
+    const outerClient = new OpenRouterClient({ apiKey: "test" });
+    let n = 0;
+    vi.spyOn(outerClient, "completeStream").mockImplementation(async function* () {
+      n++;
+      if (n === 1) {
+        yield {
+          id: "gen_o1",
+          choices: [{
+            delta: { tool_calls: [{ index: 0, id: "tu_inv", type: "function", function: { name: "inner", arguments: "{\"input\":\"hi\"}" } }] },
+            finish_reason: "tool_calls",
+          }],
+          usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4, cost: 0.0005 },
+        } as any;
+        return;
+      }
+      yield {
+        id: "gen_o2",
+        choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 3, completion_tokens: 3, total_tokens: 6, cost: 0.0008 },
+      } as any;
+    });
+    const outer = new Agent({
+      name: "outer", description: "d", systemPrompt: "s", client: { model: "x" },
+      tools: [inner],
+    });
+    (outer as unknown as { openrouter: OpenRouterClient }).openrouter = outerClient;
+
+    const result = await outer.run("go");
+
+    const sum = (key: "prompt_tokens" | "completion_tokens" | "total_tokens" | "cost") =>
+      result.usageLog.reduce((s, e) => s + ((e.usage as any)[key] ?? 0), 0);
+
+    expect(result.usage.prompt_tokens).toBe(sum("prompt_tokens"));
+    expect(result.usage.completion_tokens).toBe(sum("completion_tokens"));
+    expect(result.usage.total_tokens).toBe(sum("total_tokens"));
+    expect(result.usage.cost ?? 0).toBeCloseTo(sum("cost"));
+    expect(result.usage.is_byok).toBeUndefined();
+  });
+});
