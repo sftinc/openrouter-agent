@@ -209,11 +209,16 @@ export type AgentRunOptions = Omit<RunLoopOptions, "parentRunId"> & {
 const DEFAULT_INPUT_SCHEMA = z.object({ input: z.string() });
 
 /**
- * Hidden marker used to thread the inner {@link Result} from an Agent's
- * tool wrapper to its synthesized success/error display hooks via the
- * per-invocation `metadata` object identity. The property is attached
- * non-enumerably so it stays invisible to JSON serialization, `Object.keys`,
- * `console.log`, and any downstream consumer reading `tool:end.metadata`.
+ * Symbol attached to a tool's `metadata` (and to `"agent"`
+ * {@link UsageLogEntry} objects) when the tool wraps a subagent. The value
+ * is the inner subagent {@link Result}. Use to drill from a parent's
+ * `tool:end` event or usage-log entry into the subagent's own activity.
+ *
+ * The slot is attached non-enumerably (via `Object.defineProperty`), so it
+ * stays invisible to `JSON.stringify`, `Object.keys`, `console.log`, and
+ * any spread/clone — i.e. `{...entry}` or `structuredClone(entry)` will
+ * NOT carry the inner Result through. Read the Symbol directly on the
+ * original object: `(entry as Record<PropertyKey, unknown>)[INNER_RESULT_KEY]`.
  *
  * Why a Symbol on `metadata` rather than a closure variable?
  * `Tool.ts` documents that tool instances are immutable and may be reused
@@ -226,13 +231,9 @@ const DEFAULT_INPUT_SCHEMA = z.object({ input: z.string() });
  * display hooks — keeps each invocation's Result attached to its own
  * invocation. Garbage-collected naturally when the metadata object
  * becomes unreachable.
- */
-/**
- * Symbol attached to a tool's `metadata` (and to `"agent"` `UsageLogEntry`
- * objects) when the tool wraps a subagent. The value is the inner subagent
- * `Result`. Use to drill from a parent's tool-end / usage-log entry into the
- * subagent's own activity. The slot is non-enumerable so it never leaks into
- * JSON.stringify or Object.keys output.
+ *
+ * @see {@link flattenUsageLog} for the high-level helper that recurses
+ *   through `"agent"` entries using this slot.
  */
 export const INNER_RESULT_KEY: unique symbol = Symbol("agentInnerResult");
 
