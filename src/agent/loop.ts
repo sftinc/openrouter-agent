@@ -11,6 +11,8 @@
 import type { Message, Result, Usage, UsageLogEntry } from "../types/index.js";
 import type {
   CompletionChunk,
+  EmbedRequest,
+  EmbedResponse,
   LLMConfig,
   OpenRouterTool,
   ToolCallDelta,
@@ -83,6 +85,15 @@ export interface RunLoopConfig {
       request: { messages: Message[]; tools?: OpenRouterTool[] } & LLMConfig,
       signalOrOptions?: AbortSignal | CompleteStreamOptions
     ) => AsyncIterable<CompletionChunk>;
+    /**
+     * Issue a non-streaming embeddings call. Used by tools via
+     * {@link ToolDeps.embed}. The optional `signal` aborts the underlying
+     * HTTP request when the run is cancelled.
+     */
+    embed: (
+      request: EmbedRequest,
+      signal?: AbortSignal
+    ) => Promise<EmbedResponse>;
   };
   /**
    * Outer run id when this run is a subagent invocation. Reported on the
@@ -755,6 +766,27 @@ export async function runLoop(
         usage: u ?? zeroUsage(),
         tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
       };
+    },
+    embed: async (request) => {
+      const response = await config.openrouter.embed(request, signal);
+      const u: Usage = {
+        prompt_tokens: response.usage.prompt_tokens,
+        completion_tokens: 0,
+        total_tokens: response.usage.total_tokens,
+        cost: response.usage.cost,
+        prompt_tokens_details: response.usage.prompt_tokens_details,
+      };
+      usage = addUsage(usage, u);
+      usageLog.push({
+        source: "embed",
+        runId,
+        parentRunId,
+        toolUseId: toolCallId,
+        toolName,
+        model: response.model,
+        usage: u,
+      });
+      return response;
     },
     emit,
     signal,

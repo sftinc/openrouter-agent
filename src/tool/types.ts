@@ -10,7 +10,7 @@
  * @module tool/types
  */
 import type { Message, ToolCall, Usage } from "../types/index.js";
-import type { Annotation, LLMConfig, OpenRouterTool } from "../openrouter/index.js";
+import type { Annotation, EmbedRequest, EmbedResponse, LLMConfig, OpenRouterTool } from "../openrouter/index.js";
 import type { AgentEvent } from "../agent/events.js";
 
 /**
@@ -90,6 +90,23 @@ export interface ToolDeps {
     tool_calls?: ToolCall[];
     annotations?: Annotation[];
   }>;
+  /**
+   * Issue an embeddings call using the active agent's OpenRouter client and
+   * default `embedModel` (if set). Usage from the response is folded into
+   * the run's `Result.usage` and recorded as a `"embed"` entry on
+   * `Result.usageLog`, attributed to the calling tool.
+   *
+   * @param request The embedding request. `model` defaults to the client's
+   *   `embedModel` when omitted; the call throws if neither is set.
+   * @returns The parsed {@link EmbedResponse}.
+   * @throws Whatever {@link OpenRouterClient.embed} throws.
+   * @example
+   * ```ts
+   * const res = await deps.embed({ input: "hello" });
+   * const vec = res.data[0].embedding;
+   * ```
+   */
+  embed: (request: EmbedRequest) => Promise<EmbedResponse>;
   /**
    * Forward an {@link AgentEvent} into the parent run's event stream.
    * Present when this tool is being executed inside a parent agent — for

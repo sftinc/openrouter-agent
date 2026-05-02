@@ -193,3 +193,76 @@ describe("usageLog — agent entries", () => {
     expect(result.usage.total_tokens).toBe(37);
   });
 });
+
+describe("usageLog — embed entries", () => {
+  beforeEach(() => {
+    process.env.OPENROUTER_API_KEY = "sk-test";
+  });
+
+  afterEach(() => {
+    delete process.env.OPENROUTER_API_KEY;
+  });
+
+  test("deps.embed from a tool appends an 'embed' entry attributed to the calling tool", async () => {
+    const client = new OpenRouterClient({ apiKey: "test" });
+    let mainTurn = 0;
+    vi.spyOn(client, "completeStream").mockImplementation(async function* () {
+      mainTurn++;
+      if (mainTurn === 1) {
+        yield {
+          id: "gen_e1",
+          choices: [{
+            delta: { tool_calls: [{ index: 0, id: "tu_e", type: "function", function: { name: "vec", arguments: "{}" } }] },
+            finish_reason: "tool_calls",
+          }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        } as any;
+        return;
+      }
+      yield {
+        id: "gen_e2",
+        choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      } as any;
+    });
+    vi.spyOn(client, "embed").mockResolvedValue({
+      id: "embed_1",
+      object: "list",
+      model: "openai/text-embedding-3-small",
+      data: [{ object: "embedding", index: 0, embedding: [0.1, 0.2] }],
+      usage: { prompt_tokens: 9, total_tokens: 9, cost: 0.0001 },
+    } as any);
+
+    const vec = new Tool({
+      name: "vec",
+      description: "vec",
+      inputSchema: z.object({}),
+      execute: async (_args, deps) => {
+        await deps.embed({ input: "hi" });
+        return "done";
+      },
+    });
+
+    const agent = new Agent({
+      name: "test",
+      description: "t",
+      systemPrompt: "s",
+      client: { model: "x" },
+      tools: [vec],
+    });
+    (agent as unknown as { openrouter: OpenRouterClient }).openrouter = client;
+
+    const result = await agent.run("go");
+    const embeds = result.usageLog.filter((e) => e.source === "embed");
+    expect(embeds).toHaveLength(1);
+    expect(embeds[0]).toMatchObject({
+      source: "embed",
+      toolUseId: "tu_e",
+      toolName: "vec",
+      model: "openai/text-embedding-3-small",
+      usage: { prompt_tokens: 9, completion_tokens: 0, total_tokens: 9, cost: 0.0001 },
+    });
+    // 2 (turn 1) + 9 (embed) + 2 (turn 2) = 13
+    expect(result.usage.total_tokens).toBe(13);
+  });
+});

@@ -5,6 +5,9 @@ import type { ToolDeps } from "../../src/tool/types.js";
 
 const noopDeps: ToolDeps = {
   complete: async () => ({ content: null, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } }),
+  embed: async () => {
+    throw new Error("not implemented");
+  },
 };
 
 describe("Tool", () => {
