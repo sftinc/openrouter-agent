@@ -287,12 +287,21 @@ export interface EmbedResponse {
 		/** Optional credit cost. Populated by some providers, omitted by others. */
 		cost?: number
 		/**
-		 * Optional per-modality / cache breakdown. Populated only by
-		 * providers that report it.
+		 * Optional per-modality / cache breakdown. Populated only by providers
+		 * that report it. Each sub-field is optional and only present when
+		 * non-zero.
 		 */
 		prompt_tokens_details?: {
+			/** Tokens served from the provider's prompt cache (when supported). */
 			cached_tokens?: number
-			[key: string]: number | undefined
+			/** Text tokens in the input. */
+			text_tokens?: number
+			/** Image tokens in the input (multimodal embedding models). */
+			image_tokens?: number
+			/** Audio tokens in the input. */
+			audio_tokens?: number
+			/** Video tokens in the input. */
+			video_tokens?: number
 		}
 	}
 }
