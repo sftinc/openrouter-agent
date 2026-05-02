@@ -322,6 +322,66 @@ export interface Result {
 }
 
 /**
+ * Origin tag for a {@link UsageLogEntry}. Discriminates which kind of LLM
+ * call the entry accounts for.
+ *
+ * - `"turn"` — a streaming turn from the run that owns this log.
+ * - `"tool"` — an LLM call a tool made via `deps.complete`.
+ * - `"agent"` — a nested {@link Agent} invoked as a tool. Carries the
+ *   subagent's full {@link Result.usage} as a single summary entry; the
+ *   subagent's own per-call detail lives on its inner `Result`.
+ * - `"embed"` — an embeddings call made via `deps.embed`.
+ *
+ * Note: a `"tool"` entry represents an LLM call **made by** a tool, not the
+ * tool invocation itself (tool invocations don't consume tokens; only their
+ * nested completions do). Same for `"agent"` — it's the rolled-up cost of
+ * the subagent's work, not the cost of "calling" it.
+ */
+export type UsageLogSource = "turn" | "tool" | "agent" | "embed";
+
+/**
+ * A single LLM call's contribution to a run's accumulated usage.
+ *
+ * One entry is appended for every chat or embedding call the run made,
+ * regardless of where in the call tree it originated. Entries are kept
+ * in chronological order of completion.
+ *
+ * The run-level invariant: `result.usage ≈ Σ result.usageLog[i].usage`,
+ * field-by-field for fields defined on at least one entry. `is_byok` is
+ * excluded from the aggregate (see {@link Usage.is_byok}).
+ *
+ * @example
+ * ```ts
+ * import type { UsageLogEntry } from "./types";
+ *
+ * function totalCostUSD(log: UsageLogEntry[]): number {
+ *   return log.reduce((s, e) => s + (e.usage.cost ?? 0), 0);
+ * }
+ * ```
+ *
+ * @see {@link UsageLogSource}
+ * @see {@link Result.usageLog}
+ */
+export interface UsageLogEntry {
+  /** Origin of the LLM call this entry accounts for. */
+  source: UsageLogSource;
+  /** Run id of the run that produced this entry. For `"agent"` entries this is the **subagent's** runId. */
+  runId: string;
+  /** Outer run id when this entry was produced inside a subagent (or, for `"agent"` entries, the parent's runId). Undefined for top-level activity. */
+  parentRunId?: string;
+  /** OpenRouter generation id, when the provider returned one. Present on `"turn"` entries; opportunistic on `"tool"` and `"embed"`. */
+  generationId?: string;
+  /** Identifier of the tool call this LLM call belongs to. Present on `"tool"`, `"agent"`, `"embed"`. Absent on `"turn"`. */
+  toolUseId?: string;
+  /** Tool name. Present whenever {@link UsageLogEntry.toolUseId} is. */
+  toolName?: string;
+  /** Embedding model id. Present only on `"embed"` entries. */
+  model?: string;
+  /** Per-call usage. For `"agent"` entries this is the subagent's aggregated `Result.usage`. */
+  usage: Usage;
+}
+
+/**
  * All valid `Message.role` values, exported for runtime iteration/validation.
  *
  * Declared `as const` so the array literal narrows to a readonly tuple of
