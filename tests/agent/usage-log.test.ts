@@ -388,3 +388,175 @@ describe("usageLog — invariant", () => {
     expect(result.usage.is_byok).toBeUndefined();
   });
 });
+
+describe("usageLog — partial-data preservation on errors", () => {
+  beforeEach(() => {
+    process.env.OPENROUTER_API_KEY = "sk-test";
+  });
+  afterEach(() => {
+    delete process.env.OPENROUTER_API_KEY;
+  });
+
+  test("turn: usage chunk received before stream throws is recorded on Result.usage and usageLog", async () => {
+    const client = new OpenRouterClient({ apiKey: "test" });
+    vi.spyOn(client, "completeStream").mockImplementation(async function* () {
+      // One chunk carrying both content (crosses B2 — disables retry) and
+      // usage. Then the stream errors before finish_reason arrives.
+      yield {
+        id: "gen_partial",
+        choices: [{ delta: { content: "hi" }, finish_reason: null }],
+        usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+      } as any;
+      throw new Error("network died after usage chunk");
+    });
+
+    const agent = new Agent({
+      name: "test",
+      description: "t",
+      systemPrompt: "s",
+      client: { model: "x" },
+    });
+    (agent as unknown as { openrouter: OpenRouterClient }).openrouter = client;
+
+    const result = await agent.run("hi");
+
+    expect(result.stopReason).toBe("error");
+    const turns = result.usageLog.filter((e) => e.source === "turn");
+    expect(turns).toHaveLength(1);
+    expect(turns[0].usage).toMatchObject({ prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 });
+    expect(result.usage.total_tokens).toBe(10);
+  });
+
+  test("deps.complete: usage chunk received before inner stream throws is recorded as a tool entry", async () => {
+    const client = new OpenRouterClient({ apiKey: "test" });
+    let mainTurn = 0;
+    vi.spyOn(client, "completeStream").mockImplementation(async function* () {
+      mainTurn++;
+      if (mainTurn === 1) {
+        yield {
+          id: "gen_outer",
+          choices: [{
+            delta: { tool_calls: [{ index: 0, id: "tu_p", type: "function", function: { name: "echo", arguments: "{}" } }] },
+            finish_reason: "tool_calls",
+          }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        } as any;
+        return;
+      }
+      if (mainTurn === 2) {
+        // The inner deps.complete call. Yield a usage chunk, then throw.
+        yield {
+          id: "gen_inner",
+          choices: [{ delta: { content: "" }, finish_reason: null }],
+          usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
+        } as any;
+        throw new Error("inner stream died");
+      }
+      yield {
+        id: "gen_final",
+        choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      } as any;
+    });
+
+    const echo = new Tool({
+      name: "echo",
+      description: "echo",
+      inputSchema: z.object({}),
+      execute: async (_args, deps) => {
+        try {
+          await deps.complete([{ role: "user", content: "x" }]);
+        } catch {
+          // swallow — test asserts the partial usage was still recorded
+        }
+        return "done";
+      },
+    });
+
+    const agent = new Agent({
+      name: "test",
+      description: "t",
+      systemPrompt: "s",
+      client: { model: "x" },
+      tools: [echo],
+    });
+    (agent as unknown as { openrouter: OpenRouterClient }).openrouter = client;
+
+    const result = await agent.run("go");
+
+    const tools = result.usageLog.filter((e) => e.source === "tool");
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      source: "tool",
+      toolUseId: "tu_p",
+      toolName: "echo",
+      usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
+    });
+    // 2 (turn 1) + 12 (deps.complete partial) + 2 (turn 3) = 16
+    expect(result.usage.total_tokens).toBe(16);
+  });
+
+  test("deps.embed: response without usage does not crash and pushes no entry", async () => {
+    const client = new OpenRouterClient({ apiKey: "test" });
+    let mainTurn = 0;
+    vi.spyOn(client, "completeStream").mockImplementation(async function* () {
+      mainTurn++;
+      if (mainTurn === 1) {
+        yield {
+          id: "gen_e1",
+          choices: [{
+            delta: { tool_calls: [{ index: 0, id: "tu_g", type: "function", function: { name: "vec", arguments: "{}" } }] },
+            finish_reason: "tool_calls",
+          }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        } as any;
+        return;
+      }
+      yield {
+        id: "gen_e2",
+        choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      } as any;
+    });
+    // Malformed embed response: no `usage` field.
+    vi.spyOn(client, "embed").mockResolvedValue({
+      id: "embed_x",
+      object: "list",
+      model: "openai/text-embedding-3-small",
+      data: [{ object: "embedding", index: 0, embedding: [0.1] }],
+    } as any);
+
+    const vec = new Tool({
+      name: "vec",
+      description: "vec",
+      inputSchema: z.object({}),
+      execute: async (_args, deps) => {
+        await deps.embed({ input: "hi" });
+        return "done";
+      },
+    });
+
+    const agent = new Agent({
+      name: "test",
+      description: "t",
+      systemPrompt: "s",
+      client: { model: "x" },
+      tools: [vec],
+    });
+    (agent as unknown as { openrouter: OpenRouterClient }).openrouter = client;
+
+    const result = await agent.run("go");
+
+    expect(result.stopReason).toBe("done");
+    const embeds = result.usageLog.filter((e) => e.source === "embed");
+    expect(embeds).toHaveLength(0);
+    // Only the two turn entries contribute.
+    expect(result.usage.total_tokens).toBe(4);
+
+    // The tool must have completed successfully — the missing-usage response
+    // is a defective response, not a tool error. The model sees "done", not an
+    // "Error: Cannot read properties of undefined" leak.
+    const toolMsg = result.messages.find((m) => m.role === "tool");
+    expect(toolMsg?.content).toBe("done");
+  });
+});

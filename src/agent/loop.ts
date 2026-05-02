@@ -730,37 +730,42 @@ export async function runLoop(
       const toolBuf = new Map<number, ToolCallDelta>();
       let u: Usage | undefined;
       let genId: string | null = null;
-      for await (const chunk of config.openrouter.completeStream(
-        {
-          ...overrides,
-          ...(opts?.client ?? {}),
-          messages: msgs,
-          tools: opts?.tools,
-        },
-        signal
-      )) {
-        if (!genId && chunk.id) genId = chunk.id;
-        if (chunk.usage) u = chunk.usage;
-        const sc = chunk.choices[0];
-        if (!sc) continue;
-        if (typeof sc.delta.content === "string") content += sc.delta.content;
-        if (sc.delta.tool_calls) {
-          for (const d of sc.delta.tool_calls) mergeToolCallDelta(toolBuf, d);
+      try {
+        for await (const chunk of config.openrouter.completeStream(
+          {
+            ...overrides,
+            ...(opts?.client ?? {}),
+            messages: msgs,
+            tools: opts?.tools,
+          },
+          signal
+        )) {
+          if (!genId && chunk.id) genId = chunk.id;
+          if (chunk.usage) u = chunk.usage;
+          const sc = chunk.choices[0];
+          if (!sc) continue;
+          if (typeof sc.delta.content === "string") content += sc.delta.content;
+          if (sc.delta.tool_calls) {
+            for (const d of sc.delta.tool_calls) mergeToolCallDelta(toolBuf, d);
+          }
+        }
+      } finally {
+        // Record any usage chunk we received before a stream error / abort —
+        // tokens are billed regardless of how the stream terminated.
+        if (u) {
+          usage = addUsage(usage, u);
+          usageLog.push({
+            source: "tool",
+            runId,
+            parentRunId,
+            generationId: genId ?? undefined,
+            toolUseId: toolCallId,
+            toolName,
+            usage: u,
+          });
         }
       }
       const tool_calls = assembleToolCalls(toolBuf);
-      if (u) {
-        usage = addUsage(usage, u);
-        usageLog.push({
-          source: "tool",
-          runId,
-          parentRunId,
-          generationId: genId ?? undefined,
-          toolUseId: toolCallId,
-          toolName,
-          usage: u,
-        });
-      }
       return {
         content: content.length > 0 ? content : null,
         usage: u ?? zeroUsage(),
@@ -769,26 +774,30 @@ export async function runLoop(
     },
     embed: async (request) => {
       const response = await config.openrouter.embed(request, signal);
-      // Embeddings produce no completion tokens; surface as 0 so the
-      // sum-of-entries invariant on Result.usage holds field-by-field.
-      const u: Usage = {
-        prompt_tokens: response.usage.prompt_tokens,
-        completion_tokens: 0,
-        total_tokens: response.usage.total_tokens,
-        cost: response.usage.cost,
-        prompt_tokens_details: response.usage.prompt_tokens_details,
-      };
-      usage = addUsage(usage, u);
-      usageLog.push({
-        source: "embed",
-        runId,
-        parentRunId,
-        generationId: response.id || undefined,
-        toolUseId: toolCallId,
-        toolName,
-        model: response.model,
-        usage: u,
-      });
+      // Defensive: a malformed provider response without `usage` should not
+      // break the tool. Skip the entry and return the response intact.
+      if (response.usage) {
+        // Embeddings produce no completion tokens; surface as 0 so the
+        // sum-of-entries invariant on Result.usage holds field-by-field.
+        const u: Usage = {
+          prompt_tokens: response.usage.prompt_tokens,
+          completion_tokens: 0,
+          total_tokens: response.usage.total_tokens,
+          cost: response.usage.cost,
+          prompt_tokens_details: response.usage.prompt_tokens_details,
+        };
+        usage = addUsage(usage, u);
+        usageLog.push({
+          source: "embed",
+          runId,
+          parentRunId,
+          generationId: response.id || undefined,
+          toolUseId: toolCallId,
+          toolName,
+          model: response.model,
+          usage: u,
+        });
+      }
       return response;
     },
     emit,
@@ -940,18 +949,21 @@ export async function runLoop(
       };
       emitError(anyErr.code, error.message);
       break;
-    }
-
-    if (generationId) generationIds.push(generationId);
-    if (turnUsage) {
-      usage = addUsage(usage, turnUsage);
-      usageLog.push({
-        source: "turn",
-        runId,
-        parentRunId,
-        generationId: generationId ?? undefined,
-        usage: turnUsage,
-      });
+    } finally {
+      // Record any generation id and usage chunk we received before the turn
+      // succeeded, errored, or was aborted — tokens are billed regardless of
+      // how the stream terminated. Runs even when `catch` issues a `break`.
+      if (generationId) generationIds.push(generationId);
+      if (turnUsage) {
+        usage = addUsage(usage, turnUsage);
+        usageLog.push({
+          source: "turn",
+          runId,
+          parentRunId,
+          generationId: generationId ?? undefined,
+          usage: turnUsage,
+        });
+      }
     }
 
     const assembledToolCalls = assembleToolCalls(toolCallBuf);
