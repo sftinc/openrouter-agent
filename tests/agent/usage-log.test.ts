@@ -3,6 +3,7 @@ import { Agent } from "../../src/agent/Agent.js";
 import { OpenRouterClient } from "../../src/openrouter/index.js";
 import { Tool } from "../../src/tool/index.js";
 import { z } from "zod";
+import { flattenUsageLog } from "../../src/lib/index.js";
 
 describe("usageLog — turn entries", () => {
   beforeEach(() => {
@@ -264,5 +265,63 @@ describe("usageLog — embed entries", () => {
     });
     // 2 (turn 1) + 9 (embed) + 2 (turn 2) = 13
     expect(result.usage.total_tokens).toBe(13);
+  });
+});
+
+describe("flattenUsageLog", () => {
+  beforeEach(() => {
+    process.env.OPENROUTER_API_KEY = "sk-test";
+  });
+
+  afterEach(() => {
+    delete process.env.OPENROUTER_API_KEY;
+  });
+
+  test("recurses subagent entries and replaces them with their inner leaves", async () => {
+    const innerClient = new OpenRouterClient({ apiKey: "test" });
+    vi.spyOn(innerClient, "completeStream").mockImplementation(async function* () {
+      yield {
+        id: "gen_inner",
+        choices: [{ delta: { content: "x" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
+      } as any;
+    });
+    const inner = new Agent({ name: "inner", description: "d", systemPrompt: "s", client: { model: "x" } });
+    (inner as unknown as { openrouter: OpenRouterClient }).openrouter = innerClient;
+
+    const outerClient = new OpenRouterClient({ apiKey: "test" });
+    let n = 0;
+    vi.spyOn(outerClient, "completeStream").mockImplementation(async function* () {
+      n++;
+      if (n === 1) {
+        yield {
+          id: "gen_o1",
+          choices: [{
+            delta: { tool_calls: [{ index: 0, id: "tu_z", type: "function", function: { name: "inner", arguments: "{\"input\":\"hi\"}" } }] },
+            finish_reason: "tool_calls",
+          }],
+          usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 },
+        } as any;
+        return;
+      }
+      yield {
+        id: "gen_o2",
+        choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 3, completion_tokens: 3, total_tokens: 6 },
+      } as any;
+    });
+    const outer = new Agent({
+      name: "outer", description: "d", systemPrompt: "s", client: { model: "x" },
+      tools: [inner],
+    });
+    (outer as unknown as { openrouter: OpenRouterClient }).openrouter = outerClient;
+
+    const result = await outer.run("go");
+    const flat = flattenUsageLog(result);
+
+    // Should be: outer turn 1, inner turn 1, outer turn 2 — no "agent" entry remains.
+    expect(flat.map((e) => e.source)).toEqual(["turn", "turn", "turn"]);
+    expect(flat[1]).toMatchObject({ source: "turn", usage: { total_tokens: 10 } });
+    expect(flat.reduce((s, e) => s + e.usage.total_tokens, 0)).toBe(20);
   });
 });

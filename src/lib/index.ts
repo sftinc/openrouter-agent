@@ -13,6 +13,8 @@
  * - {@link buildToolResultMessage} / {@link buildToolErrorMessage} —
  *   constructors for the `role: "tool"` conversation messages appended after
  *   a tool's `execute()` resolves or rejects (see `./messages.ts`).
+ * - {@link flattenUsageLog} — recursively replaces `"agent"` UsageLogEntry
+ *   items with their inner subagent's leaf entries (see `./usageLog.ts`).
  *
  * @module lib
  */
@@ -23,3 +25,5 @@ export { generateId } from "./ids.js";
 export { mergeNumericRecords } from "./metrics.js";
 /** See {@link ./messages!buildToolResultMessage} and {@link ./messages!buildToolErrorMessage}. */
 export { buildToolResultMessage, buildToolErrorMessage } from "./messages.js";
+/** See {@link ./usageLog!flattenUsageLog}. */
+export { flattenUsageLog } from "./usageLog.js";
