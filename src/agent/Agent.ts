@@ -227,7 +227,14 @@ const DEFAULT_INPUT_SCHEMA = z.object({ input: z.string() });
  * invocation. Garbage-collected naturally when the metadata object
  * becomes unreachable.
  */
-const INNER_RESULT_KEY = Symbol("agentInnerResult");
+/**
+ * Symbol attached to a tool's `metadata` (and to `"agent"` `UsageLogEntry`
+ * objects) when the tool wraps a subagent. The value is the inner subagent
+ * `Result`. Use to drill from a parent's tool-end / usage-log entry into the
+ * subagent's own activity. The slot is non-enumerable so it never leaks into
+ * JSON.stringify or Object.keys output.
+ */
+export const INNER_RESULT_KEY: unique symbol = Symbol("agentInnerResult");
 
 /**
  * Reshape a Tool's `args` into the input shape the AgentDisplayHooks
@@ -412,24 +419,22 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
           // we still attach to an internal object — the loop only sees it
           // if at least one path needs it.
           const userMetadata = config.asTool?.metadata?.(result, args);
-          const needsResultThread = synthesizedToolDisplay !== undefined;
+          // Always allocate a metadata object so the inner Result has a
+          // home — the parent loop reads `INNER_RESULT_KEY` off it to fold
+          // the subagent's usage into the run aggregate and emit a single
+          // `"agent"` UsageLogEntry, regardless of whether display hooks or
+          // user-supplied metadata are configured.
           const metadata =
-            userMetadata !== undefined
-              ? userMetadata
-              : needsResultThread
-                ? ({} as Record<string, unknown>)
-                : undefined;
-          if (metadata && needsResultThread) {
-            // Non-enumerable so JSON.stringify and Object.keys ignore it,
-            // keeping the observable `tool:end.metadata` identical to what
-            // the user supplied.
-            Object.defineProperty(metadata, INNER_RESULT_KEY, {
-              value: result,
-              enumerable: false,
-              writable: false,
-              configurable: true,
-            });
-          }
+            userMetadata !== undefined ? userMetadata : ({} as Record<string, unknown>);
+          // Non-enumerable so JSON.stringify and Object.keys ignore it,
+          // keeping the observable `tool:end.metadata` identical to what
+          // the user supplied.
+          Object.defineProperty(metadata, INNER_RESULT_KEY, {
+            value: result,
+            enumerable: false,
+            writable: false,
+            configurable: true,
+          });
           if (result.stopReason === "error") {
             return { error: result.error?.message ?? "subagent errored", metadata };
           }

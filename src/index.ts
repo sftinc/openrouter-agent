@@ -198,6 +198,14 @@ export type { ToolConfig, ToolDisplayHooks, ToolDeps, ToolResult } from "./tool/
  */
 export { Agent, AgentRun } from "./agent/index.js";
 /**
+ * Symbol used to attach a subagent's inner {@link Result} to its tool
+ * `metadata` and to the parent run's `"agent"` {@link UsageLogEntry}. The
+ * slot is non-enumerable; use it to drill from a parent's tool-end or
+ * usage-log entry into the subagent's own activity (e.g. via
+ * {@link flattenUsageLog}).
+ */
+export { INNER_RESULT_KEY } from "./agent/index.js";
+/**
  * Agent type surface.
  *
  * Re-exports the type-level shapes used to construct and invoke an

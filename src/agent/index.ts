@@ -14,7 +14,7 @@
  * Consumers should import from this folder (e.g. `from "./agent"`) rather
  * than from individual files inside it.
  */
-export { Agent } from "./Agent.js";
+export { Agent, INNER_RESULT_KEY } from "./Agent.js";
 export type { AgentConfig, AgentRunOptions } from "./Agent.js";
 export { AgentRun } from "./AgentRun.js";
 export { runLoop } from "./loop.js";

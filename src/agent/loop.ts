@@ -22,6 +22,7 @@ import type { ToolDeps, ToolResult } from "../tool/types.js";
 import type { SessionStore } from "../session/index.js";
 import type { AgentDisplayHooks, AgentEvent, EventDisplay, EventEmit } from "./events.js";
 import { generateId, mergeNumericRecords, buildToolResultMessage, buildToolErrorMessage } from "../lib/index.js";
+import { INNER_RESULT_KEY } from "./Agent.js";
 import {
   withRetry,
   createRetryBudget,
@@ -347,8 +348,13 @@ function pickAgentEndHook(
  *   helpers) forwarded to `Tool.execute`.
  * @param runId The current run id, copied onto emitted events.
  * @param emit The event sink for the run.
- * @returns The `role: "tool"` {@link Message} to append to the conversation
- *   for the model to consume on the next turn.
+ * @returns An object with two fields:
+ *   - `message`: the `role: "tool"` {@link Message} to append to the
+ *     conversation for the model to consume on the next turn.
+ *   - `metadata`: the optional metadata bag returned by the tool's
+ *     {@link ToolResult} (success or error path), forwarded so the caller
+ *     can detect subagent rollups via {@link INNER_RESULT_KEY}. Undefined
+ *     when the tool did not return metadata.
  */
 async function executeToolCall(
   toolCall: { id: string; function: { name: string; arguments: string } },
@@ -356,7 +362,7 @@ async function executeToolCall(
   deps: ToolDeps,
   runId: string,
   emit: EventEmit
-): Promise<Message> {
+): Promise<{ message: Message; metadata?: Record<string, unknown> }> {
   const toolUseId = newToolUseId(toolCall.id);
   const toolName = toolCall.function.name;
   const tool = toolByName.get(toolName);
@@ -418,7 +424,7 @@ async function executeToolCall(
       elapsedMs: toolEndedAt - toolStartedAt,
       display: resolveToolDisplay(tool, parsedArgs, (d) => d.error?.(parsedArgs, err, result.metadata)),
     });
-    return buildToolErrorMessage(toolCall.id, err);
+    return { message: buildToolErrorMessage(toolCall.id, err), metadata: result.metadata };
   }
 
   const out = result.content;
@@ -435,7 +441,7 @@ async function executeToolCall(
     elapsedMs: toolEndedAt - toolStartedAt,
     display: resolveToolDisplay(tool, parsedArgs, (d) => d.success?.(parsedArgs, out, result.metadata)),
   });
-  return buildToolResultMessage(toolCall.id, out);
+  return { message: buildToolResultMessage(toolCall.id, out), metadata: result.metadata };
 }
 
 /**
@@ -955,8 +961,40 @@ export async function runLoop(
     inflightAssistantIdx = messages.length - 1;
     for (const toolCall of assembledToolCalls) {
       const perToolDeps = buildToolDeps(toolCall.id, toolCall.function.name);
-      const toolMessage = await executeToolCall(toolCall, toolByName, perToolDeps, runId, emit);
+      const { message: toolMessage, metadata } = await executeToolCall(
+        toolCall,
+        toolByName,
+        perToolDeps,
+        runId,
+        emit
+      );
       messages.push(toolMessage);
+
+      // Subagent rollup: if the tool wraps an Agent, the inner Result is
+      // attached to metadata via INNER_RESULT_KEY (a non-enumerable Symbol).
+      // Fold its usage into the run aggregate and emit a single "agent"
+      // entry summarizing the subagent's work.
+      const subResult = metadata
+        ? ((metadata as Record<PropertyKey, unknown>)[INNER_RESULT_KEY] as Result | undefined)
+        : undefined;
+      if (subResult) {
+        usage = addUsage(usage, subResult.usage);
+        const entry: UsageLogEntry = {
+          source: "agent",
+          runId: subResult.runId,
+          parentRunId: runId,
+          toolUseId: toolCall.id,
+          toolName: toolCall.function.name,
+          usage: subResult.usage,
+        };
+        Object.defineProperty(entry, INNER_RESULT_KEY, {
+          value: subResult,
+          enumerable: false,
+          writable: false,
+          configurable: true,
+        });
+        usageLog.push(entry);
+      }
     }
     inflightAssistantIdx = -1;
 
