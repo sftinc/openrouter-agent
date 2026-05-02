@@ -888,7 +888,16 @@ export async function runLoop(
     }
 
     if (generationId) generationIds.push(generationId);
-    if (turnUsage) usage = addUsage(usage, turnUsage);
+    if (turnUsage) {
+      usage = addUsage(usage, turnUsage);
+      usageLog.push({
+        source: "turn",
+        runId,
+        parentRunId,
+        generationId: generationId ?? undefined,
+        usage: turnUsage,
+      });
+    }
 
     const assembledToolCalls = assembleToolCalls(toolCallBuf);
     const hasToolCalls = assembledToolCalls.length > 0;
