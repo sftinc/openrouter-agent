@@ -331,8 +331,13 @@ export type {
  * - {@link Usage} — token and cost totals returned by OpenRouter; the loop
  *   accumulates these across every completion in a run.
  * - {@link Result} — the final value returned from `Agent.run()`:
- *   `text`, full `messages`, `stopReason`, `usage`, `generationIds`, and
- *   optional `error` (when `stopReason === "error"`).
+ *   `runId`, `content`, full `messages`, `stopReason`, `usage`, the per-call
+ *   `usageLog`, `generationIds`, and optional `error` (when
+ *   `stopReason === "error"`).
+ * - {@link UsageLogSource} / {@link UsageLogEntry} — discriminator and shape
+ *   for the per-call entries appended to {@link Result.usageLog}. Each entry
+ *   accounts for one LLM call (`turn`, `tool`, `agent`, or `embed`) and folds
+ *   field-by-field into {@link Result.usage}.
  */
 export type {
   Message,
@@ -340,4 +345,17 @@ export type {
   ToolCall,
   Usage,
   Result,
+  UsageLogSource,
+  UsageLogEntry,
 } from "./types/index.js";
+
+/**
+ * Helpers for working with {@link Result.usageLog}.
+ *
+ * Re-exports {@link flattenUsageLog} from `src/lib/`. Subagent invocations
+ * appear in `usageLog` as a single `"agent"` summary entry; this helper
+ * recurses into each subagent's inner log (reachable via the
+ * {@link INNER_RESULT_KEY} Symbol on the entry) and returns a flat array of
+ * leaf entries (`"turn"`, `"tool"`, `"embed"`).
+ */
+export { flattenUsageLog } from "./lib/index.js";
