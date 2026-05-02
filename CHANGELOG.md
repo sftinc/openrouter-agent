@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0](https://github.com/sftinc/openrouter-agent/compare/v1.2.2...v1.3.0) (2026-05-02)
+
+
+### Added
+
+* **lib:** add flattenUsageLog helper ([cf3a48f](https://github.com/sftinc/openrouter-agent/commit/cf3a48f5a203db00ca113b8063628c8dc3cd6694))
+* **loop:** record agent entries from subagent invocations and roll into Result.usage ([c6040b4](https://github.com/sftinc/openrouter-agent/commit/c6040b412fcd26d68793e13dd03d9476b9102e7f))
+* **loop:** record embed entry generationId and clarify completion_tokens ([5eeb620](https://github.com/sftinc/openrouter-agent/commit/5eeb6206c9a021a92d96c5a9626bf443ecb79e9e))
+* **loop:** record tool entries from deps.complete and roll into Result.usage ([8eb2011](https://github.com/sftinc/openrouter-agent/commit/8eb201168dbc11038ddd77235ec12a6ab5313a75))
+* **loop:** record turn entries on usageLog ([1520382](https://github.com/sftinc/openrouter-agent/commit/15203824dd46630d6cc80ae78dd4aeaec12bb4d0))
+* **tool:** add ToolDeps.embed with usage logging ([81e4452](https://github.com/sftinc/openrouter-agent/commit/81e4452068347a6f9da6bd4ccd544e195e21b7be))
+* **types:** add Result.runId and Result.usageLog ([cbcdc5e](https://github.com/sftinc/openrouter-agent/commit/cbcdc5e3fed2330bb98ca6b5036601c3a1838720))
+* **types:** add UsageLogSource and UsageLogEntry ([db94c08](https://github.com/sftinc/openrouter-agent/commit/db94c084ee4b657a53cc7f3bf508ea8aea4506e2))
+* **types:** re-export UsageLogSource, UsageLogEntry, and flattenUsageLog from package root ([c4505e5](https://github.com/sftinc/openrouter-agent/commit/c4505e5ae918b6855567c3dabf9912ef9a51f913))
+
+
+### Fixed
+
+* **loop:** preserve partial usage on stream errors and harden embed against missing usage ([f9a4138](https://github.com/sftinc/openrouter-agent/commit/f9a41380e54525691a4bedae17801ec8947966ef))
+* **usage:** stop aggregating is_byok in addUsage ([b633a80](https://github.com/sftinc/openrouter-agent/commit/b633a80355010da0111e2d56dcb745605187e257))
+
+
+### Changed
+
+* **openrouter:** type modality-specific prompt token fields on EmbedResponse ([e4bf355](https://github.com/sftinc/openrouter-agent/commit/e4bf3552ae2ad141dcac5d4a76d2b509be4d89f1))
+
 ## [1.2.2](https://github.com/sftinc/openrouter-agent/compare/v1.2.1...v1.2.2) (2026-05-01)
 
 
