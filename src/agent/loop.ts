@@ -8,7 +8,7 @@
  * This module is the lower-level engine behind {@link Agent.run}. Most
  * consumers should use `Agent` rather than calling `runLoop` directly.
  */
-import type { Message, Result, Usage } from "../types/index.js";
+import type { Message, Result, Usage, UsageLogEntry } from "../types/index.js";
 import type {
   CompletionChunk,
   LLMConfig,
@@ -693,6 +693,7 @@ export async function runLoop(
 
   let usage = zeroUsage();
   const generationIds: string[] = [];
+  const usageLog: UsageLogEntry[] = [];
   let stopReason: Result["stopReason"] | null = null;
   let error: Result["error"];
 
@@ -951,10 +952,12 @@ export async function runLoop(
   }
 
   const result: Result = {
+    runId,
     content: lastAssistantContent(messages),
     messages: messages.slice(sessionCount),
     stopReason,
     usage,
+    usageLog,
     generationIds,
     error,
   };

@@ -287,6 +287,8 @@ export interface Usage {
  * @see {@link Usage}
  */
 export interface Result {
+  /** Run id of this run. Stable for the lifetime of one `Agent.run()` invocation. */
+  runId: string;
   /**
    * The final assistant text message after all tool calls in this run.
    * Empty string if the run produced no assistant text (e.g. `error` before
@@ -307,8 +309,21 @@ export interface Result {
     | "length"
     | "content_filter"
     | "error";
-  /** Accumulated usage across every LLM call in this run. */
+  /**
+   * Accumulated usage across every LLM call this run made — including calls
+   * via `deps.complete`, embedding calls via `deps.embed`, and the rolled-up
+   * usage of every subagent. `is_byok` is **not** aggregated; per-entry
+   * `usageLog[i].usage.is_byok` is preserved.
+   */
   usage: Usage;
+  /**
+   * Per-call breakdown. One entry per LLM call this run made directly. Calls
+   * made inside subagents are summarized as a single `"agent"` entry whose
+   * `usage` equals the subagent's aggregate; the subagent's own breakdown is
+   * on its inner `Result` and reachable via the `INNER_RESULT_KEY` Symbol
+   * attached to the entry. Use {@link flattenUsageLog} to recurse.
+   */
+  usageLog: UsageLogEntry[];
   /** Every `response.id` OpenRouter returned, in order. */
   generationIds: string[];
   /**

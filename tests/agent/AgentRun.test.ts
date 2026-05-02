@@ -5,10 +5,12 @@ import type { Result } from "../../src/types/index.js";
 
 function mkResult(overrides: Partial<Result> = {}): Result {
   return {
+    runId: "run_test",
     content: "ok",
     messages: [],
     stopReason: "done",
     usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    usageLog: [],
     generationIds: [],
     ...overrides,
   };
