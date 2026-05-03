@@ -771,8 +771,19 @@ export class OpenRouterClient {
 
 		const json = (await response.json()) as EmbedResponse
 		if (process.env.OPENROUTER_DEBUG) {
+			const redacted = {
+				...json,
+				data: json.data?.map((d) => {
+					const dim = Array.isArray(d.embedding)
+						? d.embedding.length
+						: typeof d.embedding === 'string'
+							? d.embedding.length
+							: 0
+					return { ...d, embedding: `<${dim} dims omitted>` }
+				}),
+			}
 			// eslint-disable-next-line no-console
-			console.log('[openrouter:embed] response:', JSON.stringify(json))
+			console.log('[openrouter:embed] response:', JSON.stringify(redacted))
 		}
 		return json
 	}
