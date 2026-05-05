@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking — `OpenRouterClient` namespaced surface
+
+The OpenRouter client surface is restructured into per-modality namespaces.
+The previous top-level `complete` / `completeStream` / `embed` methods and
+top-level constructor options (`model`, `embedModel`, `temperature`, …) are
+removed. The exported `DEFAULT_MODEL` constant is also removed; default
+models are now hardcoded inside each namespace.
+
+Despite the breaking surface change, this project stays on the 1.x line —
+the change ships as a `feat:` minor bump rather than a major bump (per
+`CLAUDE.md`).
+
+**Migration map:**
+
+| Old                                               | New                                                       |
+| ------------------------------------------------- | --------------------------------------------------------- |
+| `client.complete(req)`                            | `client.chat.complete(req)`                               |
+| `client.completeStream(req)`                      | `client.chat.completeStream(req)`                         |
+| `client.embed(req)`                               | `client.embeddings.create(req)`                           |
+| _(new)_                                           | `client.audio.transcriptions.create(req)`                 |
+| `new OpenRouterClient({ model, temperature })`    | `new OpenRouterClient({ chat: { model, temperature } })`  |
+| `new OpenRouterClient({ embedModel })`            | `new OpenRouterClient({ embeddings: { model } })`         |
+| _(new)_                                           | `new OpenRouterClient({ audio: { transcriptions: { … } } })` |
+| `import { DEFAULT_MODEL }`                        | _removed_ — defaults are hardcoded per namespace          |
+
+`ToolDeps` gains a required `transcribe(request)` method (mirroring the
+existing required `embed(request)`). `RunLoopConfig.openrouter` likewise
+gains a required `transcribe` function. `UsageLogSource` gains the
+`"transcribe"` discriminator and `UsageLogEntry` gains an optional
+`transcriptionModel` field. `UsageLogEntry.model` is renamed to
+`embeddingModel` for symmetry.
+
+**Where to review the changes:**
+
+- Spec — `docs/superpowers/specs/2026-05-05-openrouter-namespaced-clients-design.md`
+- Plan — `docs/superpowers/plans/2026-05-05-openrouter-namespaced-clients.md`
+- API reference — `docs/api/openrouter.md` (rewritten) and `docs/api/index.md`
+- Source — `src/openrouter/{client,chat,embeddings,transport}.ts`,
+  `src/openrouter/audio/{index,transcriptions,transcriptions.types}.ts`
+
+### Added
+
+- `OpenRouterClient.audio.transcriptions.create` — wraps OpenRouter's
+  `/audio/transcriptions` endpoint with per-call defaults overridable from
+  the namespace constructor.
+- New types: `TranscriptionRequest`, `TranscriptionResponse`,
+  `TranscriptionsDefaults`, `TranscriptionProviderOptions`,
+  `EmbeddingsDefaults`.
+- `Transport` shared HTTP layer (auth + headers + retry + fetch) used by
+  every namespace.
+
+### Changed
+
+- `chat.complete` is now a drainer over `chat.completeStream`. There is one
+  HTTP path per endpoint; the previous `stream: false` branch is removed.
+  Public contract is unchanged — callers still get one resolved
+  `CompletionsResponse`.
+
+### Removed
+
+- Top-level `OpenRouterClient.complete` / `completeStream` / `embed`
+  methods. Use `client.chat.*` / `client.embeddings.*` instead.
+- Top-level constructor options on `OpenRouterClient`: `model`,
+  `embedModel`, `temperature`, `top_p`, etc. Nest them under `chat` /
+  `embeddings` / `audio.transcriptions`.
+- `DEFAULT_MODEL` export. Per-namespace fallbacks: chat
+  `"openai/gpt-5.4"`, embeddings `"openai/text-embedding-3-small"`,
+  transcriptions `"openai/gpt-4o-mini-transcribe"`.
+
 ## [1.3.1](https://github.com/sftinc/openrouter-agent/compare/v1.3.0...v1.3.1) (2026-05-03)
 
 
