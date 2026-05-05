@@ -1,191 +1,51 @@
 /**
- * @file HTTP client for OpenRouter's chat completions endpoint.
+ * @file `OpenRouterClient` — thin shell around `Transport` plus three
+ * namespace classes (chat, embeddings, audio.transcriptions). Each
+ * endpoint owns its own defaults and request/response types; transport-level
+ * concerns (auth, headers, retry) live on the shared {@link Transport}.
  *
- * Wraps `POST https://openrouter.ai/api/v1/chat/completions` with two entry
- * points:
- *   - {@link OpenRouterClient.complete} for non-streaming JSON responses.
- *   - {@link OpenRouterClient.completeStream} for SSE token-by-token streaming.
- *
- * Re-exports {@link OpenRouterError} (defined in `errors.ts`) and the internal
- * `assembleCompletionsResponse` helper used solely to render a streaming run as
- * a single response object for `OPENROUTER_DEBUG` logging.
- *
- * The client is thin on purpose: it does not retry, queue, or rate-limit.
- * Higher-level concerns (the agent loop, tool execution, message
- * persistence) live in `src/agent/` and `src/session/`.
+ * Re-exports {@link OpenRouterError} (defined in `errors.ts`) and the
+ * public {@link RequestOptions} type.
  */
 
-import type {
-	CompletionChunk,
-	CompletionsRequest,
-	CompletionsResponse,
-	LLMConfig,
-} from './types.js'
-import { DEFAULT_MODEL } from './types.js'
-import { parseSseStream } from './sse.js'
-import { StreamTruncatedError, OpenRouterError } from './errors.js'
-import {
-	createRetryBudget,
-	resolveRetryConfig,
-	type RetryConfig,
-	type RetryBudget,
-} from './retry.js'
-import { Transport } from './transport.js'
+import { Transport, isLocalhostUrl } from './transport.js'
+import { ChatNamespace } from './chat.js'
+import { EmbeddingsNamespace } from './embeddings.js'
+import { AudioNamespace } from './audio/index.js'
+import type { LLMConfig } from './types.js'
+import type { TranscriptionsDefaults } from './audio/transcriptions.types.js'
+import type { RetryConfig, RetryBudget } from './retry.js'
 
 export { OpenRouterError } from './errors.js'
+export type { RequestOptions } from './transport.js'
 
 /**
- * Options for {@link OpenRouterClient}. Project-wide LLM defaults (model,
- * max_tokens, temperature, etc.) live here via {@link LLMConfig} —
- * everything on `LLMConfig` is part of the chat-completions request body.
- * `apiKey`, `referer`, and `title` are transport-level fields sent as
- * headers and are stripped from the request body.
+ * Body of a request to {@link EmbeddingsNamespace.create}. Mirrors
+ * OpenRouter's OpenAI-compatible embeddings shape.
  *
  * @example
  * ```ts
  * import { OpenRouterClient } from "./openrouter";
- *
- * const client = new OpenRouterClient({
- *   apiKey: process.env.OPENROUTER_API_KEY,
- *   referer: "https://example.com",
- *   title: "My App",
- *   model: "anthropic/claude-haiku-4.5",
- *   temperature: 0.2,
+ * const client = new OpenRouterClient({ apiKey: process.env.OPENROUTER_API_KEY });
+ * const res = await client.embeddings.create({
+ *   input: ["hello", "world"],
+ *   model: "openai/text-embedding-3-small",
  * });
  * ```
  */
-export interface OpenRouterClientOptions extends LLMConfig {
-	/**
-	 * OpenRouter API key. Falls back to the `OPENROUTER_API_KEY` environment
-	 * variable when omitted. The constructor throws if neither source
-	 * provides a key.
-	 */
-	apiKey?: string
-	/**
-	 * Optional human-readable site/app name. Sent as the
-	 * `X-OpenRouter-Title` header for OpenRouter rankings/attribution.
-	 *
-	 * **Only takes effect when `referer` is also set.** Per OpenRouter's
-	 * app-attribution rules, a title sent without an `HTTP-Referer` is
-	 * silently ignored — no app page is created and the title will not
-	 * appear in OpenRouter logs or rankings. When `referer` is a
-	 * `localhost` URL, `title` is additionally required for the app to
-	 * be tracked.
-	 *
-	 * @see https://openrouter.ai/docs/app-attribution
-	 */
-	title?: string
-	/**
-	 * Optional referer URL. Sent as the `HTTP-Referer` header for
-	 * OpenRouter rankings/attribution. Must be a URL (e.g.
-	 * `https://myapp.com`) — OpenRouter uses it as the unique identifier
-	 * for your app. Without this header, attribution does not happen and
-	 * `title` is ignored.
-	 *
-	 * @see https://openrouter.ai/docs/app-attribution
-	 */
-	referer?: string
-	/**
-	 * Optional retry policy. Applied to {@link OpenRouterClient.complete},
-	 * {@link OpenRouterClient.completeStream}, and {@link OpenRouterClient.embed}
-	 * connection-level failures (`fetch` rejections, retryable HTTP statuses).
-	 * Defaults to `DEFAULT_RETRY_CONFIG` when omitted. Per-call overrides via
-	 * the second argument to each method are also supported.
-	 */
-	retry?: RetryConfig
-	/**
-	 * Default embedding model used by {@link OpenRouterClient.embed} when
-	 * `EmbedRequest.model` is omitted. There is **no** package-level default
-	 * for embeddings — if neither this field nor the request specifies a
-	 * model, `embed()` throws.
-	 */
-	embedModel?: string
-}
-
-/**
- * Options accepted as the second argument to {@link OpenRouterClient.complete},
- * {@link OpenRouterClient.completeStream}, and {@link OpenRouterClient.embed}.
- * Each method also accepts a bare `AbortSignal` for back-compat.
- *
- * Use the options form when you need to share a {@link RetryBudget} across
- * layers (the agent loop does this) or override the {@link RetryConfig} per
- * call.
- *
- * @example
- * ```ts
- * import { OpenRouterClient, createRetryBudget, resolveRetryConfig } from './openrouter'
- *
- * const config = resolveRetryConfig({ maxAttempts: 5 })
- * const budget = createRetryBudget(config)
- * for await (const chunk of client.completeStream(req, { retryBudget: budget, retryConfig: config })) {
- *   // ...
- * }
- * ```
- */
-export interface RequestOptions {
-	/** Cancellation signal. */
-	signal?: AbortSignal
-	/**
-	 * Shared retry budget. When provided, retries decrement this budget so
-	 * the loop layer's stream-level retries do not compound. When omitted,
-	 * the client allocates its own budget from `retryConfig`.
-	 */
-	retryBudget?: RetryBudget
-	/**
-	 * Per-call override of the client's {@link RetryConfig}. Merged
-	 * field-by-field on top of the client's resolved config.
-	 */
-	retryConfig?: RetryConfig
-}
-
-/**
- * @deprecated Use {@link RequestOptions}. This alias exists so existing
- * imports keep compiling for one minor cycle and will be removed in the
- * next major.
- */
-export type CompleteStreamOptions = RequestOptions
-
-/**
- * Body of a request to {@link OpenRouterClient.embed}. Mirrors OpenRouter's
- * OpenAI-compatible embeddings shape but deliberately narrows `input` to
- * text-only for v1 — multimodal and token-id inputs are valid upstream and
- * can be added later as a non-breaking union widening.
- *
- * @example
- * ```ts
- * const res = await client.embed({
- *   model: 'qwen/qwen3-embedding-8b',
- *   input: ['hello', 'world'],
- *   dimensions: 1536,
- * })
- * const vectors = res.data.map((d) => d.embedding as number[])
- * ```
- */
 export interface EmbedRequest {
-	/**
-	 * Embedding model id (e.g. `"qwen/qwen3-embedding-8b"`). Falls back to
-	 * the client's `embedModel` when omitted. {@link OpenRouterClient.embed}
-	 * throws if neither is set — there is no package-level default.
-	 */
+	/** Embedding model id. Falls through to client default → hardcoded fallback `"openai/text-embedding-3-small"`. */
 	model?: string
 	/** Text(s) to embed. */
 	input: string | string[]
-	/**
-	 * Optional output dimensionality. Rejected by models that do not
-	 * support it (e.g. fixed-dim providers).
-	 */
+	/** Optional output dimensionality. Rejected by models that don't support it. */
 	dimensions?: number
-	/**
-	 * Output encoding. Default `"float"` (vector); `"base64"` returns the
-	 * vector as a base64-encoded binary string for transport efficiency.
-	 */
+	/** Output encoding. Default `"float"`. */
 	encoding_format?: 'float' | 'base64'
 	/**
 	 * Provider-specific input classification. Cohere uses
 	 * `"search_query"` / `"search_document"` / `"classification"` /
-	 * `"clustering"`; Voyage uses `"query"` / `"document"`; other providers
-	 * may add more. Typed as `string` so each provider's vocabulary stays
-	 * valid without TS noise.
+	 * `"clustering"`; Voyage uses `"query"` / `"document"`.
 	 */
 	input_type?: string
 	/** Optional end-user identifier forwarded to the provider. */
@@ -193,22 +53,9 @@ export interface EmbedRequest {
 }
 
 /**
- * Parsed response from {@link OpenRouterClient.embed}. Faithful to the
- * OpenRouter (OpenAI-compatible) embeddings response — `id`, `cost`, and
- * `prompt_tokens_details` are inconsistently populated across providers
- * and so are typed as optional, mirroring how {@link CompletionsResponse}
- * handles partial provider support.
- *
- * @example
- * ```ts
- * const res = await client.embed({ model: 'm', input: 'hi' })
- * const vec = res.data[0].embedding
- * if (typeof vec === 'string') {
- *   // base64-encoded — only when encoding_format was 'base64'
- * } else {
- *   // float vector — the default
- * }
- * ```
+ * Parsed response from {@link EmbeddingsNamespace.create}. OpenAI-compatible
+ * shape; some sub-fields are optional because providers populate them
+ * inconsistently.
  */
 export interface EmbedResponse {
 	/** Server-assigned response id. */
@@ -221,50 +68,36 @@ export interface EmbedResponse {
 	data: Array<{
 		object: 'embedding'
 		index: number
-		/**
-		 * Vector when `encoding_format` is `"float"` (the default). Base64-
-		 * encoded string when `encoding_format` is `"base64"`. Discriminate
-		 * with `typeof embedding === 'string'` before use.
-		 */
+		/** Vector when `encoding_format` is `"float"`; base64 string when `"base64"`. */
 		embedding: number[] | string
 	}>
 	/** Token usage and (optionally) cost. */
 	usage: {
 		prompt_tokens: number
 		total_tokens: number
-		/** Optional credit cost. Populated by some providers, omitted by others. */
+		/** Optional credit cost. */
 		cost?: number
-		/**
-		 * Optional per-modality / cache breakdown. Populated only by providers
-		 * that report it. Each sub-field is optional and only present when
-		 * non-zero.
-		 */
+		/** Optional per-modality / cache breakdown. */
 		prompt_tokens_details?: {
-			/** Tokens served from the provider's prompt cache (when supported). */
 			cached_tokens?: number
-			/** Text tokens in the input. */
 			text_tokens?: number
-			/** Image tokens in the input (multimodal embedding models). */
 			image_tokens?: number
-			/** Audio tokens in the input. */
 			audio_tokens?: number
-			/** Video tokens in the input. */
 			video_tokens?: number
 		}
 	}
 }
 
 /**
- * Default values applied to every {@link OpenRouterClient.embed} (soon
- * {@link EmbeddingsNamespace.create}) request unless overridden per call.
- * All fields optional. Field-level resolution: per-call request > these
- * defaults > hardcoded fallback (model only, falls back to
- * `"openai/text-embedding-3-small"`).
+ * Default values applied to every {@link EmbeddingsNamespace.create}
+ * request unless overridden per call. All fields optional. Field-level
+ * resolution: per-call request > these defaults > hardcoded fallback
+ * (`"openai/text-embedding-3-small"` for `model`).
  */
 export interface EmbeddingsDefaults {
 	/** Default embedding model. Falls back to `"openai/text-embedding-3-small"`. */
 	model?: string
-	/** Default output dimensionality. Rejected by models that don't support it. */
+	/** Default output dimensionality. */
 	dimensions?: number
 	/** Default output encoding. */
 	encoding_format?: 'float' | 'base64'
@@ -274,479 +107,104 @@ export interface EmbeddingsDefaults {
 	user?: string
 }
 
-import { isLocalhostUrl } from './transport.js'
-
 /**
- * Thin HTTP client for OpenRouter's `/chat/completions` endpoint. Holds the
- * API key (from env or constructor), optional `referer`/`title` headers for
- * OpenRouter attribution, and default {@link LLMConfig} values applied to
- * every request.
- *
- * Per-request fields always override client defaults, which override the
- * built-in {@link DEFAULT_MODEL} fallback. Both streaming and non-streaming
- * shapes are supported via {@link OpenRouterClient.completeStream} and
- * {@link OpenRouterClient.complete} respectively.
+ * Options for {@link OpenRouterClient}. Top-level fields are
+ * transport-shared (`apiKey`, `referer`, `title`, `retry`); per-modality
+ * defaults live under `chat`, `embeddings`, and `audio.transcriptions`.
  *
  * @example
  * ```ts
+ * import { OpenRouterClient } from "./openrouter";
+ *
  * const client = new OpenRouterClient({
  *   apiKey: process.env.OPENROUTER_API_KEY,
- *   model: "anthropic/claude-haiku-4.5",
- *   temperature: 0.2,
+ *   referer: "https://myapp.com",
+ *   title: "my-app",
+ *   chat: { model: "anthropic/claude-haiku-4.5", temperature: 0.2 },
+ *   embeddings: { model: "qwen/qwen3-embedding-8b" },
+ *   audio: { transcriptions: { model: "openai/whisper-1" } },
  * });
- * const res = await client.complete({ messages: [{ role: "user", content: "hi" }] });
+ * ```
+ */
+export interface OpenRouterClientOptions {
+	/** OpenRouter API key. Falls back to `OPENROUTER_API_KEY` env var. */
+	apiKey?: string
+	/** Optional `HTTP-Referer` value for OpenRouter app attribution. */
+	referer?: string
+	/** Optional `X-OpenRouter-Title` value (only used when `referer` is set). */
+	title?: string
+	/** Retry policy shared across all namespaces. */
+	retry?: RetryConfig
+	/** Defaults applied to every chat completion request. */
+	chat?: LLMConfig
+	/** Defaults applied to every embeddings request. */
+	embeddings?: EmbeddingsDefaults
+	/** Defaults applied to audio sub-namespaces. */
+	audio?: { transcriptions?: TranscriptionsDefaults }
+}
+
+/**
+ * Root OpenRouter client. Exposes one namespace per endpoint family:
+ *
+ * - `client.chat` — chat completions ({@link ChatNamespace})
+ * - `client.embeddings` — embeddings ({@link EmbeddingsNamespace})
+ * - `client.audio.transcriptions` — speech-to-text ({@link AudioNamespace})
+ *
+ * Holds the {@link Transport} privately; it is shared across all three
+ * namespaces. There is no top-level `model` / `embedModel` /
+ * `transcriptionModel` — every model lives under its namespace.
+ *
+ * @example
+ * ```ts
+ * import { OpenRouterClient } from "./openrouter";
+ *
+ * const client = new OpenRouterClient({
+ *   apiKey: process.env.OPENROUTER_API_KEY,
+ *   chat: { model: "anthropic/claude-haiku-4.5" },
+ * });
+ * const res = await client.chat.complete({
+ *   messages: [{ role: "user", content: "hi" }],
+ * });
  * ```
  */
 export class OpenRouterClient {
-	/** Shared HTTP transport (auth, attribution, retry, fetch). */
-	private readonly transport: Transport
-	/** Per-client {@link LLMConfig} defaults applied to every request. */
-	private readonly defaults: LLMConfig
-	/** Default embedding model. Used by `embed()` when the request omits `model`. */
-	private readonly embedModel?: string
+	/** Chat completions namespace. */
+	readonly chat: ChatNamespace
+	/** Embeddings namespace. */
+	readonly embeddings: EmbeddingsNamespace
+	/** Audio sub-namespaces. */
+	readonly audio: AudioNamespace
 
 	/**
-	 * Build a client. Pulls the API key from the options first, then from
-	 * the `OPENROUTER_API_KEY` environment variable. All fields beyond
-	 * `apiKey`, `title`, and `referer` are stored as {@link LLMConfig}
-	 * defaults.
-	 *
-	 * @param options Client options. `apiKey` falls back to the
-	 *   `OPENROUTER_API_KEY` env var; if neither is set the constructor
-	 *   throws. `title` is sent as `X-OpenRouter-Title`; `referer` as
-	 *   `HTTP-Referer`. All other fields (`model`, `temperature`, etc.)
-	 *   become {@link LLMConfig} defaults.
-	 * @throws {Error} If no API key is available from either source.
+	 * @param options Transport options + per-namespace defaults. All optional.
+	 *   `apiKey` falls back to `OPENROUTER_API_KEY` env var; if both are
+	 *   missing the constructor throws.
 	 */
-	constructor(options: OpenRouterClientOptions) {
-		const { apiKey, title, referer, retry, embedModel, ...llmDefaults } = options
-		if (title && !referer) {
+	constructor(options: OpenRouterClientOptions = {}) {
+		if (options.title && !options.referer) {
+			// eslint-disable-next-line no-console
 			console.warn(
 				'[OpenRouterClient] `title` was provided without `referer`. OpenRouter ignores `X-OpenRouter-Title` unless `HTTP-Referer` is also set, so the title will not appear in OpenRouter logs or rankings. See https://openrouter.ai/docs/app-attribution',
 			)
 		}
-		if (referer && !title && isLocalhostUrl(referer)) {
+		if (options.referer && !options.title && isLocalhostUrl(options.referer)) {
+			// eslint-disable-next-line no-console
 			console.warn(
-				`[OpenRouterClient] \`referer\` is a localhost URL (${referer}) but \`title\` was not provided. OpenRouter requires \`X-OpenRouter-Title\` alongside a localhost \`HTTP-Referer\` for the app to be tracked. See https://openrouter.ai/docs/app-attribution`,
-			)
-		}
-		this.transport = new Transport({ apiKey, title, referer, retry })
-		this.defaults = llmDefaults
-		this.embedModel = embedModel
-	}
-
-	/**
-	 * Shallow-copied {@link LLMConfig} defaults configured on this client.
-	 * Useful for callers (like the agent loop) that want to read what the
-	 * client will send for fields the caller has not overridden. Returns a
-	 * fresh object on each call — mutating the result has no effect on the
-	 * client.
-	 */
-	get llmDefaults(): LLMConfig {
-		return { ...this.defaults }
-	}
-
-	/**
-	 * POSTs a streaming chat completion to `${BASE_URL}/chat/completions`
-	 * with `stream: true` and yields parsed SSE chunks
-	 * ({@link CompletionChunk}) as they arrive. The final chunk before the
-	 * `[DONE]` sentinel typically carries `usage` with an empty `choices`
-	 * array.
-	 *
-	 * Precedence for the request body, lowest to highest priority:
-	 *   1. {@link DEFAULT_MODEL} as the model fallback;
-	 *   2. this client's {@link LLMConfig} defaults;
-	 *   3. fields on `request`;
-	 *   4. `stream: true` (always forced).
-	 *
-	 * When the `OPENROUTER_DEBUG` env var is set, every chunk is collected
-	 * and reassembled into a single {@link CompletionsResponse} via
-	 * {@link assembleCompletionsResponse} for diagnostic logging after the
-	 * stream completes.
-	 *
-	 * @param request The completion request. `messages` is required;
-	 *   everything else may be omitted to inherit defaults.
-	 * @param signalOrOptions Optional. Accepts either an `AbortSignal`
-	 *   (legacy form) or a {@link RequestOptions} object with
-	 *   `signal`/`retryBudget`/`retryConfig`. Aborting cancels the
-	 *   underlying `fetch` and the SSE reader; the generator throws an
-	 *   `AbortError`.
-	 * @returns Async generator yielding {@link CompletionChunk} values. The
-	 *   generator returns when `[DONE]` is seen or the body closes.
-	 * @throws {OpenRouterError} On non-2xx responses (thrown before any
-	 *   chunks are yielded, after retry attempts are exhausted) or when the
-	 *   response has no body.
-	 * @throws {StreamTruncatedError} When the SSE body ends without `[DONE]`
-	 *   and no terminal `finish_reason` was observed. Carries
-	 *   `partialContentLength` for the bytes that did make it through. When
-	 *   a terminal `finish_reason` was observed, the truncation is treated
-	 *   as a benign provider quirk and the generator returns cleanly.
-	 * @throws {IdleTimeoutError} When no SSE chunk arrives within
-	 *   `idleTimeoutMs` (default 60s).
-	 *
-	 * @example
-	 * ```ts
-	 * for await (const chunk of client.completeStream({ messages })) {
-	 *   process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
-	 * }
-	 * ```
-	 */
-	async *completeStream(
-		request: CompletionsRequest,
-		signalOrOptions?: AbortSignal | RequestOptions,
-	): AsyncGenerator<CompletionChunk, void, void> {
-		const opts: RequestOptions =
-			signalOrOptions instanceof AbortSignal
-				? { signal: signalOrOptions }
-				: (signalOrOptions ?? {})
-		const config = opts.retryConfig
-			? resolveRetryConfig({ ...this.transport.retry, ...opts.retryConfig })
-			: this.transport.retry
-		const budget = opts.retryBudget ?? createRetryBudget(config)
-
-		const body = {
-			model: DEFAULT_MODEL,
-			...this.defaults,
-			...request,
-			stream: true as const,
-		}
-
-		// Connection-level retry. Only governs the fetch + non-2xx response
-		// path; once any chunk has been yielded the loop layer takes over.
-		// The B2 boundary (no retry past the first content delta) cannot be
-		// crossed at this layer because no chunks have been observed yet.
-		const response = await this.transport.fetchWithRetry(
-			'/chat/completions',
-			{ method: 'POST', body: JSON.stringify(body) },
-			{ signal: opts.signal, retryBudget: budget, retryConfig: config },
-			'[openrouter:stream]',
-			{ Accept: 'text/event-stream' },
-		)
-
-		if (!response.body) {
-			throw new OpenRouterError({ code: response.status, message: 'streaming response had no body' })
-		}
-
-		const debug = !!process.env.OPENROUTER_DEBUG
-		const debugChunks: CompletionChunk[] = []
-		let sawTerminalFinishReason = false
-		let partialContentLength = 0
-		try {
-			for await (const payload of parseSseStream(response.body, { idleTimeoutMs: config.idleTimeoutMs })) {
-				const chunk = payload as CompletionChunk
-				if (debug) debugChunks.push(chunk)
-				for (const c of chunk.choices ?? []) {
-					if (c.finish_reason != null) sawTerminalFinishReason = true
-					if (typeof c.delta?.content === 'string') partialContentLength += c.delta.content.length
-				}
-				yield chunk
-			}
-			if (debug) {
-				const assembled = assembleCompletionsResponse(debugChunks)
-				const hasToolCalls = (assembled.choices ?? []).some(
-					(c) => Array.isArray(c.message?.tool_calls) && c.message.tool_calls.length > 0,
-				)
-				const debugBody = JSON.stringify(assembled)
-				// eslint-disable-next-line no-console
-				console.log('[openrouter:stream] response:', hasToolCalls ? `\x1b[33m${debugBody}\x1b[0m` : debugBody)
-			}
-		} catch (err) {
-			if (err instanceof StreamTruncatedError) {
-				if (sawTerminalFinishReason) return
-				throw new StreamTruncatedError({
-					message: err.message,
-					generationId: err.generationId,
-					partialContentLength,
-				})
-			}
-			throw err
-		} finally {
-			/**
-			 * Cancel the underlying body stream if the generator is abandoned
-			 * early (e.g. via AbortSignal or the consumer calling `return()`).
-			 * Errors are swallowed because the stream may already be closed.
-			 */
-			response.body.cancel().catch(() => {
-				// ignore errors on cancel — stream may already be closed
-			})
-		}
-	}
-
-	/**
-	 * POSTs a non-streaming chat completion to `${BASE_URL}/chat/completions`
-	 * and returns the parsed {@link CompletionsResponse}. The request is
-	 * sent with `stream: false`. For token-by-token SSE streaming use
-	 * {@link OpenRouterClient.completeStream}.
-	 *
-	 * Precedence for the request body, lowest to highest priority:
-	 *   1. {@link DEFAULT_MODEL} as the model fallback;
-	 *   2. this client's {@link LLMConfig} defaults;
-	 *   3. fields on `request`;
-	 *   4. `stream: false` (always forced).
-	 *
-	 * Connection-level retries follow the same policy as
-	 * {@link OpenRouterClient.completeStream}: retryable HTTP statuses
-	 * (`408`, `429`, `500`, `502`, `503`, `504`) and `fetch` rejections
-	 * are retried with exponential-jittered backoff. The 2xx
-	 * `response.json()` parse stays outside the retry loop — once a 200
-	 * body is in hand, retrying would re-charge the user.
-	 *
-	 * When `OPENROUTER_DEBUG` is set, the parsed response is logged to
-	 * stderr/stdout (yellow if it contains tool calls).
-	 *
-	 * @param request The completion request. `messages` is required.
-	 * @param signalOrOptions Optional. Accepts either an `AbortSignal`
-	 *   (legacy form) or a {@link RequestOptions} object with
-	 *   `signal`/`retryBudget`/`retryConfig`. Aborting cancels the
-	 *   underlying `fetch`.
-	 * @returns The parsed {@link CompletionsResponse}.
-	 * @throws {OpenRouterError} On non-2xx responses (after retry attempts
-	 *   are exhausted). Common codes: 401 (missing or invalid key), 402
-	 *   (out of credits), 429 (rate limited), 503 (upstream provider error).
-	 */
-	async complete(
-		request: CompletionsRequest,
-		signalOrOptions?: AbortSignal | RequestOptions,
-	): Promise<CompletionsResponse> {
-		const opts: RequestOptions =
-			signalOrOptions instanceof AbortSignal
-				? { signal: signalOrOptions }
-				: (signalOrOptions ?? {})
-
-		/**
-		 * Precedence: DEFAULT_MODEL fallback < client.defaults < per-request fields.
-		 * `stream: false` is hardcoded — this method is non-streaming by design.
-		 */
-		const body = {
-			model: DEFAULT_MODEL,
-			...this.defaults,
-			...request,
-			stream: false as const,
-		}
-
-		const response = await this.transport.fetchWithRetry(
-			'/chat/completions',
-			{ method: 'POST', body: JSON.stringify(body) },
-			opts,
-			'[openrouter]',
-		)
-
-		const json = (await response.json()) as CompletionsResponse
-		if (process.env.OPENROUTER_DEBUG) {
-			const hasToolCalls = (json.choices ?? []).some(
-				(c) => Array.isArray(c.message?.tool_calls) && c.message.tool_calls.length > 0,
-			)
-			const debugBody = JSON.stringify(json)
-			// eslint-disable-next-line no-console
-			console.log('[openrouter] response:', hasToolCalls ? `\x1b[33m${debugBody}\x1b[0m` : debugBody)
-		}
-		return json
-	}
-
-	/**
-	 * POSTs a non-streaming embeddings request to
-	 * `${BASE_URL}/embeddings` and returns the parsed
-	 * {@link EmbedResponse}. OpenAI-compatible passthrough — the response is
-	 * returned faithfully without shape-shifting.
-	 *
-	 * Model precedence: `request.model` > `OpenRouterClientOptions.embedModel`.
-	 * Throws when neither is set — there is no package-level default for
-	 * embedding models.
-	 *
-	 * Connection-level retries follow the same policy as
-	 * {@link OpenRouterClient.complete} and
-	 * {@link OpenRouterClient.completeStream}. The 2xx
-	 * `response.json()` parse stays outside the retry loop — once a 200
-	 * body is in hand, retrying would re-charge the user.
-	 *
-	 * When `OPENROUTER_DEBUG` is set, the parsed response is logged to
-	 * stdout with the `[openrouter:embed]` prefix.
-	 *
-	 * @param request The embed request. `input` is required.
-	 * @param signalOrOptions Optional. Accepts either an `AbortSignal`
-	 *   (legacy form) or a {@link RequestOptions} object with
-	 *   `signal`/`retryBudget`/`retryConfig`.
-	 * @returns The parsed {@link EmbedResponse}.
-	 * @throws {Error} If neither `request.model` nor the client's
-	 *   `embedModel` is set.
-	 * @throws {OpenRouterError} On non-2xx responses after retry attempts
-	 *   are exhausted. Common codes: 400 (bad input), 401 (auth), 402
-	 *   (credits), 429 (rate limited), 503 (provider down).
-	 *
-	 * @example
-	 * ```ts
-	 * const res = await client.embed({
-	 *   model: 'qwen/qwen3-embedding-8b',
-	 *   input: ['hello', 'world'],
-	 *   dimensions: 1536,
-	 * })
-	 * const vectors = res.data.map((d) => d.embedding as number[])
-	 * ```
-	 */
-	async embed(
-		request: EmbedRequest,
-		signalOrOptions?: AbortSignal | RequestOptions,
-	): Promise<EmbedResponse> {
-		const model = request.model ?? this.embedModel
-		if (!model) {
-			throw new Error(
-				'No embedding model: set embedModel on OpenRouterClient or pass model on EmbedRequest.',
+				`[OpenRouterClient] \`referer\` is a localhost URL (${options.referer}) but \`title\` was not provided. OpenRouter requires \`X-OpenRouter-Title\` alongside a localhost \`HTTP-Referer\` for the app to be tracked. See https://openrouter.ai/docs/app-attribution`,
 			)
 		}
 
-		const opts: RequestOptions =
-			signalOrOptions instanceof AbortSignal
-				? { signal: signalOrOptions }
-				: (signalOrOptions ?? {})
-
-		const body: Record<string, unknown> = {
-			model,
-			input: request.input,
-		}
-		if (request.dimensions !== undefined) body.dimensions = request.dimensions
-		if (request.encoding_format) body.encoding_format = request.encoding_format
-		if (request.input_type) body.input_type = request.input_type
-		if (request.user) body.user = request.user
-
-		const response = await this.transport.fetchWithRetry(
-			'/embeddings',
-			{ method: 'POST', body: JSON.stringify(body) },
-			opts,
-			'[openrouter:embed]',
-		)
-
-		const json = (await response.json()) as EmbedResponse
-		if (process.env.OPENROUTER_DEBUG) {
-			const redacted = {
-				...json,
-				data: json.data?.map((d) => {
-					const dim = Array.isArray(d.embedding)
-						? d.embedding.length
-						: typeof d.embedding === 'string'
-							? d.embedding.length
-							: 0
-					return { ...d, embedding: `<${dim} dims omitted>` }
-				}),
-			}
-			// eslint-disable-next-line no-console
-			console.log('[openrouter:embed] response:', JSON.stringify(redacted))
-		}
-		return json
+		const transport = new Transport({
+			apiKey: options.apiKey,
+			referer: options.referer,
+			title: options.title,
+			retry: options.retry,
+		})
+		this.chat = new ChatNamespace(transport, options.chat)
+		this.embeddings = new EmbeddingsNamespace(transport, options.embeddings)
+		this.audio = new AudioNamespace(transport, options.audio)
 	}
-
 }
 
-/**
- * Folds an ordered list of streaming {@link CompletionChunk}s into the same
- * {@link CompletionsResponse} shape the non-streaming endpoint returns.
- * Used only for `OPENROUTER_DEBUG` logging — the runtime path consumes
- * chunks directly.
- *
- * Per-choice accumulation:
- *   - `content`: concatenate every `delta.content` string.
- *   - `role`: take the first non-empty `delta.role` (defaults to
- *     `"assistant"`).
- *   - `tool_calls`: keyed by `index`; first appearance locks
- *     `id`/`type`/`function.name`, `function.arguments` strings concatenate.
- *   - `finish_reason` / `native_finish_reason`: last non-null wins.
- *
- * Top-level `id`/`model`/`created` come from the first chunk that has them;
- * `usage` from whichever chunk carries it (typically the final frame).
- *
- * @param chunks Stream chunks in arrival order.
- * @returns A synthesized {@link CompletionsResponse} equivalent to what
- *   the non-streaming endpoint would have returned for the same generation.
- */
-function assembleCompletionsResponse(chunks: CompletionChunk[]): CompletionsResponse {
-	/**
-	 * Per-tool-call accumulator. `id`/`type`/`name` are locked on first
-	 * appearance; `arguments` accumulates concatenated JSON-string fragments.
-	 */
-	type ToolAcc = { id?: string; type?: 'function'; name?: string; arguments: string }
-	/** Per-choice accumulator built up across chunks. */
-	type ChoiceAcc = {
-		content: string
-		role: string
-		toolCalls: Map<number, ToolAcc>
-		finish_reason: string | null
-		native_finish_reason: string | null
-	}
-	const choices = new Map<number, ChoiceAcc>()
-	let id = ''
-	let model = ''
-	let created = 0
-	let usage: CompletionsResponse['usage']
-
-	for (const chunk of chunks) {
-		if (!id && chunk.id) id = chunk.id
-		if (!model && chunk.model) model = chunk.model
-		if (!created && chunk.created) created = chunk.created
-		if (chunk.usage) usage = chunk.usage
-		const cs = chunk.choices ?? []
-		for (let i = 0; i < cs.length; i++) {
-			const sc = cs[i]!
-			/**
-			 * OpenRouter SSE choices carry an `index`, but our
-			 * {@link StreamingChoice} type doesn't declare it; fall back to
-			 * position when missing.
-			 */
-			const idx = (sc as unknown as { index?: number }).index ?? i
-			let acc = choices.get(idx)
-			if (!acc) {
-				acc = {
-					content: '',
-					role: 'assistant',
-					toolCalls: new Map(),
-					finish_reason: null,
-					native_finish_reason: null,
-				}
-				choices.set(idx, acc)
-			}
-			if (typeof sc.delta?.content === 'string') acc.content += sc.delta.content
-			if (sc.delta?.role) acc.role = sc.delta.role
-			for (const td of sc.delta?.tool_calls ?? []) {
-				let tc = acc.toolCalls.get(td.index)
-				if (!tc) {
-					tc = { id: td.id, type: td.type, name: td.function?.name, arguments: '' }
-					acc.toolCalls.set(td.index, tc)
-				} else {
-					if (!tc.id && td.id) tc.id = td.id
-					if (!tc.type && td.type) tc.type = td.type
-					if (!tc.name && td.function?.name) tc.name = td.function.name
-				}
-				if (typeof td.function?.arguments === 'string') tc.arguments += td.function.arguments
-			}
-			if (sc.finish_reason !== null && sc.finish_reason !== undefined) acc.finish_reason = sc.finish_reason
-			if (sc.native_finish_reason !== null && sc.native_finish_reason !== undefined)
-				acc.native_finish_reason = sc.native_finish_reason
-		}
-	}
-
-	const sortedIndexes = [...choices.keys()].sort((a, b) => a - b)
-	return {
-		id,
-		object: 'chat.completion',
-		created,
-		model,
-		choices: sortedIndexes.map((idx) => {
-			const acc = choices.get(idx)!
-			const toolCalls = [...acc.toolCalls.entries()]
-				.sort(([a], [b]) => a - b)
-				.map(([, tc]) => ({
-					id: tc.id ?? '',
-					type: (tc.type ?? 'function') as 'function',
-					function: { name: tc.name ?? '', arguments: tc.arguments },
-				}))
-			return {
-				finish_reason: acc.finish_reason,
-				native_finish_reason: acc.native_finish_reason,
-				message: {
-					role: acc.role,
-					content: acc.content.length > 0 ? acc.content : null,
-					...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-				},
-			}
-		}),
-		...(usage ? { usage } : {}),
-	}
-}
+/** Re-export for callers that share a budget across layers. */
+export type { RetryBudget }

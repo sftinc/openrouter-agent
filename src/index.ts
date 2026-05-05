@@ -10,8 +10,8 @@
  * The public surface is intentionally narrow:
  *
  * - **OpenRouter client** — {@link setOpenRouterClient}, {@link OpenRouterClient},
- *   {@link OpenRouterError}, {@link DEFAULT_MODEL}, plus the request/response
- *   and configuration types ({@link LLMConfig}, {@link OpenRouterClientOptions},
+ *   {@link OpenRouterError}, plus the request/response and configuration
+ *   types ({@link LLMConfig}, {@link OpenRouterClientOptions},
  *   {@link OpenRouterTool}, {@link CompletionsRequest},
  *   {@link CompletionsResponse}).
  * - **Tool layer** — {@link Tool} and its config/dependency/result types
@@ -106,8 +106,6 @@
  *   (model, sampling knobs, etc.) and OpenRouter auth/attribution headers.
  * - {@link OpenRouterError} — thrown by the client on any non-2xx response;
  *   carries the HTTP status code, parsed body, and provider metadata.
- * - {@link DEFAULT_MODEL} — hardcoded fallback model slug used when no
- *   `model` is supplied at any layer of the config-merge chain.
  */
 export {
   setOpenRouterClient,
@@ -117,7 +115,6 @@ export {
   IdleTimeoutError,
   defaultIsRetryable,
   RetryableProviderError,
-  DEFAULT_MODEL,
 } from "./openrouter/index.js";
 /**
  * OpenRouter type surface.
@@ -150,6 +147,11 @@ export type {
   RequestOptions,
   EmbedRequest,
   EmbedResponse,
+  EmbeddingsDefaults,
+  TranscriptionRequest,
+  TranscriptionResponse,
+  TranscriptionsDefaults,
+  TranscriptionProviderOptions,
 } from "./openrouter/index.js";
 /**
  * Tool layer.

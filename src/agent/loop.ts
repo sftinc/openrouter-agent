@@ -15,9 +15,11 @@ import type {
   EmbedResponse,
   LLMConfig,
   OpenRouterTool,
+  RequestOptions,
   ToolCallDelta,
+  TranscriptionRequest,
+  TranscriptionResponse,
 } from "../openrouter/index.js";
-import type { CompleteStreamOptions } from "../openrouter/client.js";
 import type { ToolCall } from "../types/index.js";
 import type { Tool } from "../tool/Tool.js";
 import type { ToolDeps, ToolResult } from "../tool/types.js";
@@ -83,7 +85,7 @@ export interface RunLoopConfig {
      */
     completeStream: (
       request: { messages: Message[]; tools?: OpenRouterTool[] } & LLMConfig,
-      signalOrOptions?: AbortSignal | CompleteStreamOptions
+      signalOrOptions?: AbortSignal | RequestOptions
     ) => AsyncIterable<CompletionChunk>;
     /**
      * Issue a non-streaming embeddings call. Used by tools via
@@ -94,6 +96,15 @@ export interface RunLoopConfig {
       request: EmbedRequest,
       signal?: AbortSignal
     ) => Promise<EmbedResponse>;
+    /**
+     * Issue a non-streaming transcription call. Used by tools via
+     * {@link ToolDeps.transcribe}. The optional `signal` aborts the underlying
+     * HTTP request when the run is cancelled.
+     */
+    transcribe: (
+      request: TranscriptionRequest,
+      signal?: AbortSignal
+    ) => Promise<TranscriptionResponse>;
   };
   /**
    * Outer run id when this run is a subagent invocation. Reported on the
@@ -794,7 +805,29 @@ export async function runLoop(
           generationId: response.id || undefined,
           toolUseId: toolCallId,
           toolName,
-          model: response.model,
+          embeddingModel: response.model,
+          usage: u,
+        });
+      }
+      return response;
+    },
+    transcribe: async (request) => {
+      const response = await config.openrouter.transcribe(request, signal);
+      if (response.usage) {
+        const u: Usage = {
+          prompt_tokens: response.usage.input_tokens,
+          completion_tokens: response.usage.output_tokens,
+          total_tokens: response.usage.total_tokens,
+          cost: response.usage.cost,
+        };
+        usage = addUsage(usage, u);
+        usageLog.push({
+          source: "transcribe",
+          runId,
+          parentRunId,
+          toolUseId: toolCallId,
+          toolName,
+          transcriptionModel: request.model,
           usage: u,
         });
       }

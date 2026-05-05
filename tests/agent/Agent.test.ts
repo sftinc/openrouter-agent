@@ -43,13 +43,12 @@ describe('Agent', () => {
 		expect(events[events.length - 1]).toBe('agent:end')
 	})
 
-	test('default model falls back to DEFAULT_MODEL when client is omitted', async () => {
+	test('default model falls back to chat namespace default when client is omitted', async () => {
 		fetchSpy.mockResolvedValue(mockOkSse('ok'))
 		const agent = new Agent({ name: 'a', description: 'd' })
 		await agent.run('hi')
 		const body = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)
-		const { DEFAULT_MODEL } = await import('../../src/openrouter/index.js')
-		expect(body.model).toBe(DEFAULT_MODEL)
+		expect(body.model).toBe('openai/gpt-5.4')
 	})
 
 	test('per-run client shallow-merges over constructor client', async () => {
@@ -807,26 +806,30 @@ describe("Agent — retry config plumbing", () => {
   test("forwards AgentConfig.retry into the run loop", async () => {
     let observedConfig: unknown;
     const stubClient = {
-      completeStream: (_req: unknown, opts: unknown) => {
-        observedConfig = opts;
-        return (async function* () {
-          yield {
-            id: "gen-1",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "m",
-            choices: [{ finish_reason: "stop", native_finish_reason: "stop", delta: { content: "ok" } }],
-          };
-          yield {
-            id: "gen-1",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "m",
-            choices: [],
-            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-          };
-        })();
+      chat: {
+        completeStream: (_req: unknown, opts: unknown) => {
+          observedConfig = opts;
+          return (async function* () {
+            yield {
+              id: "gen-1",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "m",
+              choices: [{ finish_reason: "stop", native_finish_reason: "stop", delta: { content: "ok" } }],
+            };
+            yield {
+              id: "gen-1",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "m",
+              choices: [],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            };
+          })();
+        },
       },
+      embeddings: { create: () => Promise.resolve({}) },
+      audio: { transcriptions: { create: () => Promise.resolve({}) } },
     } as unknown as OpenRouterClient;
 
     const agent = new Agent({
@@ -844,22 +847,26 @@ describe("Agent — retry config plumbing", () => {
   test("per-run retry merges over AgentConfig.retry", async () => {
     let observedConfig: any;
     const stubClient = {
-      completeStream: (_req: unknown, opts: unknown) => {
-        observedConfig = opts;
-        return (async function* () {
-          yield {
-            id: "gen-1",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "m",
-            choices: [{ finish_reason: "stop", native_finish_reason: "stop", delta: { content: "ok" } }],
-          };
-          yield {
-            id: "gen-1", object: "chat.completion.chunk", created: 1, model: "m", choices: [],
-            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-          };
-        })();
+      chat: {
+        completeStream: (_req: unknown, opts: unknown) => {
+          observedConfig = opts;
+          return (async function* () {
+            yield {
+              id: "gen-1",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "m",
+              choices: [{ finish_reason: "stop", native_finish_reason: "stop", delta: { content: "ok" } }],
+            };
+            yield {
+              id: "gen-1", object: "chat.completion.chunk", created: 1, model: "m", choices: [],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            };
+          })();
+        },
       },
+      embeddings: { create: () => Promise.resolve({}) },
+      audio: { transcriptions: { create: () => Promise.resolve({}) } },
     } as unknown as OpenRouterClient;
 
     const agent = new Agent({

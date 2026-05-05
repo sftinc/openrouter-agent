@@ -16,7 +16,7 @@ describe("usageLog — turn entries", () => {
 
   test("a single-turn run appends one 'turn' entry whose usage equals turnUsage", async () => {
     const client = new OpenRouterClient({ apiKey: "test" });
-    vi.spyOn(client, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(client.chat, "completeStream").mockImplementation(async function* () {
       yield {
         id: "gen_1",
         choices: [{ delta: { content: "hi" }, finish_reason: "stop" }],
@@ -57,7 +57,7 @@ describe("usageLog — tool entries", () => {
   test("deps.complete from a tool appends a 'tool' entry attributed to the calling tool", async () => {
     const client = new OpenRouterClient({ apiKey: "test" });
     let mainTurn = 0;
-    vi.spyOn(client, "completeStream").mockImplementation(async function* (req: any) {
+    vi.spyOn(client.chat, "completeStream").mockImplementation(async function* (req: any) {
       mainTurn++;
       if (mainTurn === 1) {
         yield {
@@ -133,7 +133,7 @@ describe("usageLog — agent entries", () => {
 
   test("subagent invocation appends a single 'agent' entry summarizing inner usage", async () => {
     const innerClient = new OpenRouterClient({ apiKey: "test" });
-    vi.spyOn(innerClient, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(innerClient.chat, "completeStream").mockImplementation(async function* () {
       yield {
         id: "gen_inner",
         choices: [{ delta: { content: "inner" }, finish_reason: "stop" }],
@@ -150,7 +150,7 @@ describe("usageLog — agent entries", () => {
 
     const outerClient = new OpenRouterClient({ apiKey: "test" });
     let outerTurn = 0;
-    vi.spyOn(outerClient, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(outerClient.chat, "completeStream").mockImplementation(async function* () {
       outerTurn++;
       if (outerTurn === 1) {
         yield {
@@ -207,7 +207,7 @@ describe("usageLog — embed entries", () => {
   test("deps.embed from a tool appends an 'embed' entry attributed to the calling tool", async () => {
     const client = new OpenRouterClient({ apiKey: "test" });
     let mainTurn = 0;
-    vi.spyOn(client, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(client.chat, "completeStream").mockImplementation(async function* () {
       mainTurn++;
       if (mainTurn === 1) {
         yield {
@@ -226,7 +226,7 @@ describe("usageLog — embed entries", () => {
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
       } as any;
     });
-    vi.spyOn(client, "embed").mockResolvedValue({
+    vi.spyOn(client.embeddings, "create").mockResolvedValue({
       id: "embed_1",
       object: "list",
       model: "openai/text-embedding-3-small",
@@ -260,7 +260,7 @@ describe("usageLog — embed entries", () => {
       source: "embed",
       toolUseId: "tu_e",
       toolName: "vec",
-      model: "openai/text-embedding-3-small",
+      embeddingModel: "openai/text-embedding-3-small",
       usage: { prompt_tokens: 9, completion_tokens: 0, total_tokens: 9, cost: 0.0001 },
     });
     // 2 (turn 1) + 9 (embed) + 2 (turn 2) = 13
@@ -279,7 +279,7 @@ describe("flattenUsageLog", () => {
 
   test("recurses subagent entries and replaces them with their inner leaves", async () => {
     const innerClient = new OpenRouterClient({ apiKey: "test" });
-    vi.spyOn(innerClient, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(innerClient.chat, "completeStream").mockImplementation(async function* () {
       yield {
         id: "gen_inner",
         choices: [{ delta: { content: "x" }, finish_reason: "stop" }],
@@ -291,7 +291,7 @@ describe("flattenUsageLog", () => {
 
     const outerClient = new OpenRouterClient({ apiKey: "test" });
     let n = 0;
-    vi.spyOn(outerClient, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(outerClient.chat, "completeStream").mockImplementation(async function* () {
       n++;
       if (n === 1) {
         yield {
@@ -336,7 +336,7 @@ describe("usageLog — invariant", () => {
 
   test("Result.usage equals sum of usageLog entry usages, field by field", async () => {
     const innerClient = new OpenRouterClient({ apiKey: "test" });
-    vi.spyOn(innerClient, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(innerClient.chat, "completeStream").mockImplementation(async function* () {
       yield {
         id: "gen_i",
         choices: [{ delta: { content: "x" }, finish_reason: "stop" }],
@@ -351,7 +351,7 @@ describe("usageLog — invariant", () => {
 
     const outerClient = new OpenRouterClient({ apiKey: "test" });
     let n = 0;
-    vi.spyOn(outerClient, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(outerClient.chat, "completeStream").mockImplementation(async function* () {
       n++;
       if (n === 1) {
         yield {
@@ -399,7 +399,7 @@ describe("usageLog — partial-data preservation on errors", () => {
 
   test("turn: usage chunk received before stream throws is recorded on Result.usage and usageLog", async () => {
     const client = new OpenRouterClient({ apiKey: "test" });
-    vi.spyOn(client, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(client.chat, "completeStream").mockImplementation(async function* () {
       // One chunk carrying both content (crosses B2 — disables retry) and
       // usage. Then the stream errors before finish_reason arrives.
       yield {
@@ -430,7 +430,7 @@ describe("usageLog — partial-data preservation on errors", () => {
   test("deps.complete: usage chunk received before inner stream throws is recorded as a tool entry", async () => {
     const client = new OpenRouterClient({ apiKey: "test" });
     let mainTurn = 0;
-    vi.spyOn(client, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(client.chat, "completeStream").mockImplementation(async function* () {
       mainTurn++;
       if (mainTurn === 1) {
         yield {
@@ -499,7 +499,7 @@ describe("usageLog — partial-data preservation on errors", () => {
   test("deps.embed: response without usage does not crash and pushes no entry", async () => {
     const client = new OpenRouterClient({ apiKey: "test" });
     let mainTurn = 0;
-    vi.spyOn(client, "completeStream").mockImplementation(async function* () {
+    vi.spyOn(client.chat, "completeStream").mockImplementation(async function* () {
       mainTurn++;
       if (mainTurn === 1) {
         yield {
@@ -519,7 +519,7 @@ describe("usageLog — partial-data preservation on errors", () => {
       } as any;
     });
     // Malformed embed response: no `usage` field.
-    vi.spyOn(client, "embed").mockResolvedValue({
+    vi.spyOn(client.embeddings, "create").mockResolvedValue({
       id: "embed_x",
       object: "list",
       model: "openai/text-embedding-3-small",

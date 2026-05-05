@@ -28,8 +28,9 @@ import type { Message, ToolCall, Usage } from '../types/index.js'
  */
 export interface LLMConfig {
 	/**
-	 * Model slug (e.g. `"anthropic/claude-haiku-4.5"`). Falls back to
-	 * {@link DEFAULT_MODEL} when omitted at every layer.
+	 * Model slug (e.g. `"anthropic/claude-haiku-4.5"`). Falls back to the
+	 * chat namespace's hardcoded default `"openai/gpt-5.4"` when omitted at
+	 * every layer.
 	 */
 	model?: string
 	/**
@@ -437,9 +438,3 @@ export interface CompletionChunk {
 	usage?: Usage
 }
 
-/**
- * Default model slug used when no `model` is set anywhere in the
- * config layering ({@link CompletionsRequest} > {@link OpenRouterClient}
- * defaults > this constant).
- */
-export const DEFAULT_MODEL = 'anthropic/claude-haiku-4.5'

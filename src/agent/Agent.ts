@@ -550,7 +550,11 @@ export class Agent<Input = { input: string }> extends Tool<Input> {
       tools: this.agentTools,
       maxTurns: this.maxTurns,
       sessionStore: this.sessionStore,
-      openrouter: this.openrouter,
+      openrouter: {
+        completeStream: (req, opts) => this.openrouter.chat.completeStream(req, opts),
+        embed: (req, signal) => this.openrouter.embeddings.create(req, signal),
+        transcribe: (req, signal) => this.openrouter.audio.transcriptions.create(req, signal),
+      },
       parentRunId,
       display: this.agentDisplay,
       retry: this.retryConfig,

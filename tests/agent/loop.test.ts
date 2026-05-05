@@ -90,6 +90,8 @@ function mkConfig(overrides: Partial<RunLoopConfig> = {}): RunLoopConfig {
     completeStream: vi.fn((_req: unknown, _signal?: AbortSignal) =>
       mockStream(mockChunks({ content: "hello" }))
     ),
+    embed: vi.fn().mockResolvedValue({ id: "embed-stub", object: "list", model: "stub", data: [], usage: { prompt_tokens: 0, total_tokens: 0 } }),
+    transcribe: vi.fn().mockResolvedValue({ text: "", usage: { seconds: 0, total_tokens: 0, input_tokens: 0, output_tokens: 0 } }),
   };
   return {
     agentName: "test-agent",

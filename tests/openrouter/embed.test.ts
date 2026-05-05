@@ -23,7 +23,7 @@ describe("OpenRouterClient.embed — body assembly + happy paths", () => {
   test("single string input returns one embedding indexed 0", async () => {
     fetchSpy.mockResolvedValue(okResponse());
     const client = new OpenRouterClient({ apiKey: "sk-test" });
-    const res = await client.embed({ model: "m", input: "hello" });
+    const res = await client.embeddings.create({ model: "m", input: "hello" });
     expect(res.data).toHaveLength(1);
     expect(res.data[0].index).toBe(0);
   });
@@ -40,14 +40,14 @@ describe("OpenRouterClient.embed — body assembly + happy paths", () => {
       }),
     );
     const client = new OpenRouterClient({ apiKey: "sk-test" });
-    const res = await client.embed({ model: "m", input: ["a", "b", "c"] });
+    const res = await client.embeddings.create({ model: "m", input: ["a", "b", "c"] });
     expect(res.data.map((d) => d.index)).toEqual([0, 1, 2]);
   });
 
   test("only sends optional fields when set", async () => {
     fetchSpy.mockResolvedValue(okResponse());
     const client = new OpenRouterClient({ apiKey: "sk-test" });
-    await client.embed({ model: "m", input: "hi" });
+    await client.embeddings.create({ model: "m", input: "hi" });
     const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const sent = JSON.parse(init.body as string);
     expect(sent).toEqual({ model: "m", input: "hi" });
@@ -56,7 +56,7 @@ describe("OpenRouterClient.embed — body assembly + happy paths", () => {
   test("forwards dimensions, input_type, user when set", async () => {
     fetchSpy.mockResolvedValue(okResponse());
     const client = new OpenRouterClient({ apiKey: "sk-test" });
-    await client.embed({
+    await client.embeddings.create({
       model: "m",
       input: "hi",
       dimensions: 1536,
@@ -76,27 +76,31 @@ describe("OpenRouterClient.embed — model precedence", () => {
   beforeEach(() => { fetchSpy = vi.spyOn(globalThis, "fetch"); });
   afterEach(() => { fetchSpy.mockRestore(); });
 
-  test("uses client embedModel when request omits model", async () => {
+  test("uses client embeddings.model when request omits model", async () => {
     fetchSpy.mockResolvedValue(okResponse());
-    const client = new OpenRouterClient({ apiKey: "sk-test", embedModel: "client-default" });
-    await client.embed({ input: "hi" });
+    const client = new OpenRouterClient({ apiKey: "sk-test", embeddings: { model: "client-default" } });
+    await client.embeddings.create({ input: "hi" });
     const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const sent = JSON.parse(init.body as string);
     expect(sent.model).toBe("client-default");
   });
 
-  test("request.model wins over client embedModel", async () => {
+  test("request.model wins over client embeddings.model", async () => {
     fetchSpy.mockResolvedValue(okResponse());
-    const client = new OpenRouterClient({ apiKey: "sk-test", embedModel: "client-default" });
-    await client.embed({ model: "request-override", input: "hi" });
+    const client = new OpenRouterClient({ apiKey: "sk-test", embeddings: { model: "client-default" } });
+    await client.embeddings.create({ model: "request-override", input: "hi" });
     const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const sent = JSON.parse(init.body as string);
     expect(sent.model).toBe("request-override");
   });
 
-  test("throws clearly when neither client nor request supplies a model", async () => {
+  test("falls through to package-level default model when nothing else is set", async () => {
+    fetchSpy.mockResolvedValue(okResponse());
     const client = new OpenRouterClient({ apiKey: "sk-test" });
-    await expect(client.embed({ input: "hi" })).rejects.toThrow(/embedModel/);
+    await client.embeddings.create({ input: "hi" });
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(init.body as string);
+    expect(sent.model).toBe("openai/text-embedding-3-small");
   });
 });
 
@@ -113,7 +117,7 @@ describe("OpenRouterClient.embed — errors and cancellation", () => {
       ),
     );
     const client = new OpenRouterClient({ apiKey: "sk-test" });
-    await expect(client.embed({ model: "m", input: "hi" })).rejects.toSatisfy((e: unknown) => {
+    await expect(client.embeddings.create({ model: "m", input: "hi" })).rejects.toSatisfy((e: unknown) => {
       return e instanceof OpenRouterError
         && e.code === 400
         && e.message === "bad input"
@@ -131,7 +135,7 @@ describe("OpenRouterClient.embed — errors and cancellation", () => {
     ac.abort();
     const client = new OpenRouterClient({ apiKey: "sk-test" });
     await expect(
-      client.embed({ model: "m", input: "hi" }, ac.signal),
+      client.embeddings.create({ model: "m", input: "hi" }, ac.signal),
     ).rejects.toSatisfy((e: unknown) => (e as Error).name === "AbortError");
   });
 });
@@ -152,7 +156,7 @@ describe("OpenRouterClient.embed — connection-level retry", () => {
       apiKey: "sk-test",
       retry: { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 5 },
     });
-    const res = await client.embed({ model: "m", input: "hi" });
+    const res = await client.embeddings.create({ model: "m", input: "hi" });
     expect(res.id).toBe("embd-1");
     expect(calls).toBe(2);
   });
@@ -167,7 +171,7 @@ describe("OpenRouterClient.embed — connection-level retry", () => {
       apiKey: "sk-test",
       retry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 5 },
     });
-    await expect(client.embed({ model: "m", input: "hi" })).rejects.toSatisfy(
+    await expect(client.embeddings.create({ model: "m", input: "hi" })).rejects.toSatisfy(
       (e: unknown) => e instanceof OpenRouterError && e.code === 503,
     );
     expect(calls).toBe(2);
@@ -186,7 +190,7 @@ describe("OpenRouterClient.embed — headers and logging", () => {
       referer: "https://example.com",
       title: "My App",
     });
-    await client.embed({ model: "m", input: "hi" });
+    await client.embeddings.create({ model: "m", input: "hi" });
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://openrouter.ai/api/v1/embeddings");
     const headers = init.headers as Record<string, string>;
@@ -204,13 +208,13 @@ describe("OpenRouterClient.embed — headers and logging", () => {
     try {
       fetchSpy.mockResolvedValue(okResponse());
       const client = new OpenRouterClient({ apiKey: "sk-test" });
-      await client.embed({ model: "m", input: "hi" });
+      await client.embeddings.create({ model: "m", input: "hi" });
       expect(logSpy.mock.calls.some((c) => String(c[0]).includes("[openrouter:embed] response:"))).toBe(true);
 
       fetchSpy.mockResolvedValue(
         new Response(JSON.stringify({ error: { message: "bad" } }), { status: 400 }),
       );
-      await expect(client.embed({ model: "m", input: "hi" })).rejects.toThrow();
+      await expect(client.embeddings.create({ model: "m", input: "hi" })).rejects.toThrow();
       expect(errSpy.mock.calls.some((c) => String(c[0]).includes("[openrouter:embed] error response:"))).toBe(true);
     } finally {
       logSpy.mockRestore();

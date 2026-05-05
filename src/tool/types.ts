@@ -10,7 +10,7 @@
  * @module tool/types
  */
 import type { Message, ToolCall, Usage } from "../types/index.js";
-import type { Annotation, EmbedRequest, EmbedResponse, LLMConfig, OpenRouterTool } from "../openrouter/index.js";
+import type { Annotation, EmbedRequest, EmbedResponse, LLMConfig, OpenRouterTool, TranscriptionRequest, TranscriptionResponse } from "../openrouter/index.js";
 import type { AgentEvent } from "../agent/events.js";
 
 /**
@@ -92,14 +92,15 @@ export interface ToolDeps {
   }>;
   /**
    * Issue an embeddings call using the active agent's OpenRouter client and
-   * default `embedModel` (if set). Usage from the response is folded into
+   * configured `embeddings` defaults. Usage from the response is folded into
    * the run's `Result.usage` and recorded as a `"embed"` entry on
    * `Result.usageLog`, attributed to the calling tool.
    *
-   * @param request The embedding request. `model` defaults to the client's
-   *   `embedModel` when omitted; the call throws if neither is set.
+   * @param request The embedding request. `model` falls through client
+   *   `embeddings.model` default → hardcoded fallback
+   *   (`"openai/text-embedding-3-small"`).
    * @returns The parsed {@link EmbedResponse}.
-   * @throws Whatever {@link OpenRouterClient.embed} throws.
+   * @throws Whatever {@link EmbeddingsNamespace.create} throws.
    * @example
    * ```ts
    * const res = await deps.embed({ input: "hello" });
@@ -107,6 +108,27 @@ export interface ToolDeps {
    * ```
    */
   embed: (request: EmbedRequest) => Promise<EmbedResponse>;
+  /**
+   * Issue a transcription call using the active agent's OpenRouter client
+   * and configured `audio.transcriptions` defaults. Usage from the response
+   * is folded into `Result.usage` and recorded as a `"transcribe"` entry on
+   * `Result.usageLog`, attributed to the calling tool.
+   *
+   * @param request The transcription request. `input_audio` is required;
+   *   `model` falls through client default → hardcoded fallback
+   *   (`"openai/gpt-4o-mini-transcribe"`).
+   * @returns The parsed {@link TranscriptionResponse}.
+   * @throws Whatever {@link TranscriptionsNamespace.create} throws.
+   * @example
+   * ```ts
+   * const res = await deps.transcribe({
+   *   input_audio: { data: base64, format: "wav" },
+   *   language: "en",
+   * });
+   * console.log(res.text);
+   * ```
+   */
+  transcribe: (request: TranscriptionRequest) => Promise<TranscriptionResponse>;
   /**
    * Forward an {@link AgentEvent} into the parent run's event stream.
    * Present when this tool is being executed inside a parent agent — for

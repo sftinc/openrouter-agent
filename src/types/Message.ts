@@ -348,13 +348,14 @@ export interface Result {
  *   subagent's full {@link Result.usage} as a single summary entry; the
  *   subagent's own per-call detail lives on its inner `Result`.
  * - `"embed"` — an embeddings call made via `deps.embed`.
+ * - `"transcribe"` — a transcription call made via `deps.transcribe`.
  *
  * Note: a `"tool"` entry represents an LLM call **made by** a tool, not the
  * tool invocation itself (tool invocations don't consume tokens; only their
  * nested completions do). Same for `"agent"` — it's the rolled-up cost of
  * the subagent's work, not the cost of "calling" it.
  */
-export type UsageLogSource = "turn" | "tool" | "agent" | "embed";
+export type UsageLogSource = "turn" | "tool" | "agent" | "embed" | "transcribe";
 
 /**
  * A single LLM call's contribution to a run's accumulated usage.
@@ -393,7 +394,9 @@ export interface UsageLogEntry {
   /** Tool name. Present whenever {@link UsageLogEntry.toolUseId} is. */
   toolName?: string;
   /** Embedding model id. Present only on `"embed"` entries. */
-  model?: string;
+  embeddingModel?: string;
+  /** Transcription model id. Present only on `"transcribe"` entries. */
+  transcriptionModel?: string;
   /** Per-call usage. For `"agent"` entries this is the subagent's aggregated `Result.usage`. */
   usage: Usage;
 }

@@ -28,7 +28,14 @@ function injectClient(
   agent: Agent,
   client: { completeStream: unknown }
 ): void {
-  (agent as unknown as { openrouter: unknown }).openrouter = client;
+  // Inject as a namespaced client mock so Agent.buildConfig's
+  // `this.openrouter.chat.completeStream(...)` call resolves to the test's
+  // `completeStream` mock.
+  (agent as unknown as { openrouter: unknown }).openrouter = {
+    chat: client,
+    embeddings: { create: () => Promise.resolve({}) },
+    audio: { transcriptions: { create: () => Promise.resolve({}) } },
+  };
 }
 
 describe("integration — retry through Agent.run", () => {

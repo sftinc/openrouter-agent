@@ -1,22 +1,34 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { OpenRouterClient, OpenRouterError } from "../../src/openrouter/client.js";
 import { resolveRetryConfig, createRetryBudget } from "../../src/openrouter/retry.js";
-import type { CompletionsResponse } from "../../src/openrouter/index.js";
 
-const OK_RESPONSE: CompletionsResponse = {
-  id: "gen-abc",
-  choices: [
-    {
-      finish_reason: "stop",
-      native_finish_reason: "stop",
-      message: { role: "assistant", content: "hello" },
+function sseResponse(body: string, status = 200): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      ctrl.enqueue(encoder.encode(body));
+      ctrl.close();
     },
-  ],
-  created: 1704067200,
-  model: "anthropic/claude-haiku-4.5",
-  object: "chat.completion",
-  usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
-};
+  });
+  return new Response(stream, {
+    status,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+function okSse(): Response {
+  const body =
+    `data: {"id":"gen-abc","object":"chat.completion.chunk","created":1704067200,"model":"anthropic/claude-haiku-4.5","choices":[{"index":0,"finish_reason":"stop","native_finish_reason":"stop","delta":{"role":"assistant","content":"hello"}}]}\n\n` +
+    `data: {"id":"gen-abc","object":"chat.completion.chunk","created":1704067200,"model":"anthropic/claude-haiku-4.5","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}\n\n` +
+    `data: [DONE]\n\n`;
+  return sseResponse(body);
+}
+
+async function collectChunks<T>(it: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const v of it) out.push(v);
+  return out;
+}
 
 describe("OpenRouterClient", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
@@ -30,12 +42,10 @@ describe("OpenRouterClient", () => {
   });
 
   test("POSTs to /chat/completions with Bearer auth and JSON body", async () => {
-    fetchSpy.mockResolvedValue(
-      new Response(JSON.stringify(OK_RESPONSE), { status: 200 })
-    );
+    fetchSpy.mockResolvedValue(okSse());
 
     const client = new OpenRouterClient({ apiKey: "sk-test" });
-    const response = await client.complete({
+    const response = await client.chat.complete({
       model: "anthropic/claude-haiku-4.5",
       messages: [{ role: "user", content: "hi" }],
     });
@@ -54,16 +64,14 @@ describe("OpenRouterClient", () => {
   });
 
   test("includes optional HTTP-Referer and X-OpenRouter-Title headers", async () => {
-    fetchSpy.mockResolvedValue(
-      new Response(JSON.stringify(OK_RESPONSE), { status: 200 })
-    );
+    fetchSpy.mockResolvedValue(okSse());
 
     const client = new OpenRouterClient({
       apiKey: "sk-test",
       referer: "https://example.com",
       title: "My App",
     });
-    await client.complete({
+    await client.chat.complete({
       model: "anthropic/claude-haiku-4.5",
       messages: [{ role: "user", content: "hi" }],
     });
@@ -84,7 +92,7 @@ describe("OpenRouterClient", () => {
       title: "My App",
     });
     await collectChunks(
-      client.completeStream({
+      client.chat.completeStream({
         model: "m",
         messages: [{ role: "user", content: "hi" }],
       }),
@@ -108,7 +116,7 @@ describe("OpenRouterClient", () => {
 
     const client = new OpenRouterClient({ apiKey: "sk-bad" });
     await expect(
-      client.complete({
+      client.chat.complete({
         model: "anthropic/claude-haiku-4.5",
         messages: [{ role: "user", content: "hi" }],
       })
@@ -118,14 +126,12 @@ describe("OpenRouterClient", () => {
   });
 
   test("uses process.env.OPENROUTER_API_KEY when apiKey is omitted", async () => {
-    fetchSpy.mockResolvedValue(
-      new Response(JSON.stringify(OK_RESPONSE), { status: 200 })
-    );
+    fetchSpy.mockResolvedValue(okSse());
     const prev = process.env.OPENROUTER_API_KEY;
     process.env.OPENROUTER_API_KEY = "sk-from-env";
     try {
       const client = new OpenRouterClient({});
-      await client.complete({
+      await client.chat.complete({
         model: "anthropic/claude-haiku-4.5",
         messages: [{ role: "user", content: "hi" }],
       });
@@ -150,26 +156,6 @@ describe("OpenRouterClient", () => {
     }
   });
 
-  function sseResponse(body: string, status = 200): Response {
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream<Uint8Array>({
-      start(ctrl) {
-        ctrl.enqueue(encoder.encode(body));
-        ctrl.close();
-      },
-    });
-    return new Response(stream, {
-      status,
-      headers: { "Content-Type": "text/event-stream" },
-    });
-  }
-
-  async function collectChunks<T>(it: AsyncIterable<T>): Promise<T[]> {
-    const out: T[] = [];
-    for await (const v of it) out.push(v);
-    return out;
-  }
-
   test("completeStream POSTs with stream:true and yields parsed chunks", async () => {
     const body =
       `data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"finish_reason":null,"native_finish_reason":null,"delta":{"content":"Hello"}}]}\n\n` +
@@ -180,7 +166,7 @@ describe("OpenRouterClient", () => {
 
     const client = new OpenRouterClient({ apiKey: "sk-test" });
     const chunks = await collectChunks(
-      client.completeStream({
+      client.chat.completeStream({
         model: "m",
         messages: [{ role: "user", content: "hi" }],
       })
@@ -204,7 +190,7 @@ describe("OpenRouterClient", () => {
     const client = new OpenRouterClient({ apiKey: "sk-test" });
     await expect(
       collectChunks(
-        client.completeStream({
+        client.chat.completeStream({
           model: "m",
           messages: [{ role: "user", content: "hi" }],
         })
@@ -241,7 +227,7 @@ describe("OpenRouterClient", () => {
 
     const ac = new AbortController();
     const client = new OpenRouterClient({ apiKey: "sk-test" });
-    const it = client.completeStream(
+    const it = client.chat.completeStream(
       { model: "m", messages: [{ role: "user", content: "hi" }] },
       ac.signal
     )[Symbol.asyncIterator]();
@@ -295,7 +281,7 @@ describe("OpenRouterClient.completeStream — connection-level retry", () => {
     const config = resolveRetryConfig({ initialDelayMs: 0, maxDelayMs: 0 });
     const budget = createRetryBudget(config);
     const chunks: unknown[] = [];
-    for await (const c of client.completeStream(
+    for await (const c of client.chat.completeStream(
       { messages: [{ role: "user", content: "hi" }] },
       { retryBudget: budget, retryConfig: config },
     )) {
@@ -313,7 +299,7 @@ describe("OpenRouterClient.completeStream — connection-level retry", () => {
     const client = new OpenRouterClient({ apiKey: "test" });
     const config = resolveRetryConfig({ initialDelayMs: 0, maxDelayMs: 0 });
     const budget = createRetryBudget(config);
-    const iter = client.completeStream(
+    const iter = client.chat.completeStream(
       { messages: [{ role: "user", content: "hi" }] },
       { retryBudget: budget, retryConfig: config },
     );
@@ -332,7 +318,7 @@ describe("OpenRouterClient.completeStream — connection-level retry", () => {
     const client = new OpenRouterClient({ apiKey: "test" });
     const config = resolveRetryConfig({ maxAttempts: 1 });
     const budget = createRetryBudget(config);
-    const iter = client.completeStream(
+    const iter = client.chat.completeStream(
       { messages: [{ role: "user", content: "hi" }] },
       { retryBudget: budget, retryConfig: config },
     );
@@ -355,7 +341,7 @@ describe("OpenRouterClient.completeStream — connection-level retry", () => {
 
     const client = new OpenRouterClient({ apiKey: "test" });
     const chunks: unknown[] = [];
-    for await (const c of client.completeStream({ messages: [{ role: "user", content: "hi" }] })) {
+    for await (const c of client.chat.completeStream({ messages: [{ role: "user", content: "hi" }] })) {
       chunks.push(c);
     }
     expect(chunks.length).toBe(1);
@@ -375,7 +361,7 @@ describe("OpenRouterClient.completeStream — connection-level retry", () => {
     const client = new OpenRouterClient({ apiKey: "test" });
     const config = resolveRetryConfig({ maxAttempts: 1 });
     const budget = createRetryBudget(config);
-    const iter = client.completeStream(
+    const iter = client.chat.completeStream(
       { messages: [{ role: "user", content: "hi" }] },
       { retryBudget: budget, retryConfig: config },
     );
@@ -390,6 +376,26 @@ describe("OpenRouterClient.complete — connection-level retry", () => {
   beforeEach(() => { originalFetch = global.fetch; });
   afterEach(() => { global.fetch = originalFetch; });
 
+  function sseBody(...lines: string[]): ReadableStream<Uint8Array> {
+    const enc = new TextEncoder();
+    return new ReadableStream({
+      start(ctrl) {
+        for (const l of lines) ctrl.enqueue(enc.encode(l));
+        ctrl.close();
+      },
+    });
+  }
+
+  function okSseResponse(): Response {
+    return new Response(
+      sseBody(
+        `data: {"id":"gen-abc","object":"chat.completion.chunk","created":1704067200,"model":"anthropic/claude-haiku-4.5","choices":[{"index":0,"finish_reason":"stop","native_finish_reason":"stop","delta":{"role":"assistant","content":"hello"}}]}\n\n`,
+        `data: [DONE]\n\n`,
+      ),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  }
+
   test("retries 503 once and resolves on the second 200", async () => {
     let calls = 0;
     global.fetch = vi.fn(async () => {
@@ -399,14 +405,14 @@ describe("OpenRouterClient.complete — connection-level retry", () => {
           status: 503,
         });
       }
-      return new Response(JSON.stringify(OK_RESPONSE), { status: 200 });
+      return okSseResponse();
     }) as unknown as typeof fetch;
 
     const client = new OpenRouterClient({
       apiKey: "sk-test",
       retry: { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 5 },
     });
-    const res = await client.complete({
+    const res = await client.chat.complete({
       model: "m",
       messages: [{ role: "user", content: "hi" }],
     });
@@ -428,16 +434,16 @@ describe("OpenRouterClient.complete — connection-level retry", () => {
       retry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 5 },
     });
     await expect(
-      client.complete({ model: "m", messages: [{ role: "user", content: "hi" }] }),
+      client.chat.complete({ model: "m", messages: [{ role: "user", content: "hi" }] }),
     ).rejects.toSatisfy((e: unknown) => e instanceof OpenRouterError && e.code === 503);
     expect(calls).toBe(2);
   });
 
   test("accepts a bare AbortSignal as the second argument (back-compat)", async () => {
-    global.fetch = vi.fn(async () => new Response(JSON.stringify(OK_RESPONSE), { status: 200 })) as unknown as typeof fetch;
+    global.fetch = vi.fn(async () => okSseResponse()) as unknown as typeof fetch;
     const client = new OpenRouterClient({ apiKey: "sk-test" });
     const ac = new AbortController();
-    const res = await client.complete(
+    const res = await client.chat.complete(
       { model: "m", messages: [{ role: "user", content: "hi" }] },
       ac.signal,
     );
@@ -451,14 +457,14 @@ describe("OpenRouterClient.complete — connection-level retry", () => {
       if (calls < 4) {
         return new Response(JSON.stringify({ error: { message: "down" } }), { status: 503 });
       }
-      return new Response(JSON.stringify(OK_RESPONSE), { status: 200 });
+      return okSseResponse();
     }) as unknown as typeof fetch;
 
     const client = new OpenRouterClient({
       apiKey: "sk-test",
       retry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 5 },
     });
-    const res = await client.complete(
+    const res = await client.chat.complete(
       { model: "m", messages: [{ role: "user", content: "hi" }] },
       { retryConfig: { maxAttempts: 5, initialDelayMs: 1, maxDelayMs: 5 } },
     );
