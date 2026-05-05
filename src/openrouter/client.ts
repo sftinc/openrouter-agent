@@ -321,6 +321,26 @@ export interface EmbedResponse {
 }
 
 /**
+ * Default values applied to every {@link OpenRouterClient.embed} (soon
+ * {@link EmbeddingsNamespace.create}) request unless overridden per call.
+ * All fields optional. Field-level resolution: per-call request > these
+ * defaults > hardcoded fallback (model only, falls back to
+ * `"openai/text-embedding-3-small"`).
+ */
+export interface EmbeddingsDefaults {
+	/** Default embedding model. Falls back to `"openai/text-embedding-3-small"`. */
+	model?: string
+	/** Default output dimensionality. Rejected by models that don't support it. */
+	dimensions?: number
+	/** Default output encoding. */
+	encoding_format?: 'float' | 'base64'
+	/** Default provider-specific input classification. */
+	input_type?: string
+	/** Default end-user identifier forwarded to the provider. */
+	user?: string
+}
+
+/**
  * Base URL for the OpenRouter v1 API. All endpoints in this client are
  * formed by appending a path (e.g. `/chat/completions`).
  */
