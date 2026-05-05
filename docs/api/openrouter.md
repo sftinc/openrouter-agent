@@ -1,6 +1,6 @@
 # OpenRouter Client (`src/openrouter/`)
 
-This folder owns the package's transport layer: a thin, typed HTTP client for OpenRouter's `/chat/completions` endpoint, the wire-shape types that mirror OpenRouter's request/response schema, a project-singleton registry so every `Agent` shares one client, a small SSE parser used by streaming completions, and a connection-level retry helper (`src/openrouter/retry.ts`) that handles transient HTTP failures before any chunks are yielded. Higher-level concerns (the agent loop, tool execution, sessions) live elsewhere; this folder stays minimal — no queueing, no rate limiting. The retry surface (`RetryConfig`, `defaultIsRetryable`, `StreamTruncatedError`, `IdleTimeoutError`, `RetryableProviderError`) is fully shipped and exported from the package root.
+This folder owns the package's transport layer: a thin, typed HTTP client for OpenRouter's `/chat/completions`, `/embeddings`, and `/audio/transcriptions` endpoints, the wire-shape types that mirror OpenRouter's request/response schemas, a project-singleton registry so every `Agent` shares one client, a small SSE parser used by streaming completions, and a connection-level retry helper (`src/openrouter/retry.ts`) that handles transient HTTP failures before any chunks are yielded. Higher-level concerns (the agent loop, tool execution, sessions) live elsewhere; this folder stays minimal — no queueing, no rate limiting. The retry surface (`RetryConfig`, `defaultIsRetryable`, `StreamTruncatedError`, `IdleTimeoutError`, `RetryableProviderError`) is fully shipped and exported from the package root.
 
 The folder's own re-export surface lives in `src/openrouter/index.ts`. The package root (`src/index.ts`) re-exports a curated subset of these for external consumers; symbols that are folder-exported but not package-exported are listed under "Internal helpers" at the bottom.
 
@@ -16,7 +16,6 @@ import {
   StreamTruncatedError,
   IdleTimeoutError,
   defaultIsRetryable,
-  DEFAULT_MODEL,
   // type-only imports
   type LLMConfig,
   type OpenRouterClientOptions,
@@ -26,6 +25,11 @@ import {
   type RetryConfig,
   type EmbedRequest,
   type EmbedResponse,
+  type EmbeddingsDefaults,
+  type TranscriptionRequest,
+  type TranscriptionResponse,
+  type TranscriptionsDefaults,
+  type TranscriptionProviderOptions,
   type RequestOptions,
 } from "@sftinc/openrouter-agent";
 ```
@@ -33,6 +37,21 @@ import {
 `StreamTruncatedError`, `IdleTimeoutError`, `defaultIsRetryable`, and `RetryConfig` are part of the retry surface — see [Retry surface](#retry-surface) at the bottom of this page for full documentation.
 
 All examples below assume that import path. Internal callers inside this repo import from the folder index (`./openrouter`), per the project convention in `CLAUDE.md`.
+
+## Migration: from flat client to namespaced client
+
+The `OpenRouterClient` surface is now organized into per-endpoint namespaces. There is no top-level `model`, `embedModel`, `temperature`, or other `LLMConfig` field on the client; every default lives under the namespace that consumes it. The hardcoded `DEFAULT_MODEL` constant has been removed — each namespace falls back to its own per-endpoint default model.
+
+| Before | After |
+| --- | --- |
+| `client.complete(...)` | `client.chat.complete(...)` |
+| `client.completeStream(...)` | `client.chat.completeStream(...)` |
+| `client.embed(...)` | `client.embeddings.create(...)` |
+| _(new)_ | `client.audio.transcriptions.create(...)` |
+| `new OpenRouterClient({ model, temperature, max_tokens })` | `new OpenRouterClient({ chat: { model, temperature, max_tokens } })` |
+| `new OpenRouterClient({ embedModel })` | `new OpenRouterClient({ embeddings: { model } })` |
+| `import { DEFAULT_MODEL } from "@sftinc/openrouter-agent"` | _(removed; per-namespace fallbacks)_ |
+| `client.llmDefaults` | `client.chat.defaults` (also `client.embeddings.defaults`, `client.audio.transcriptions.defaults`) |
 
 ---
 
@@ -62,7 +81,7 @@ The resulting `OpenRouterClient` (the same instance you passed in, or the freshl
 
 ### Errors
 
-- Throws `Error("OPENROUTER_API_KEY is not set...")` indirectly when constructing from options without an `apiKey` and without `process.env.OPENROUTER_API_KEY` (see `src/openrouter/client.ts:172-174`).
+- Throws `Error("OPENROUTER_API_KEY is not set...")` indirectly when constructing from options without an `apiKey` and without `process.env.OPENROUTER_API_KEY` (raised by the `Transport` constructor in `src/openrouter/transport.ts`).
 
 ### Behavior notes
 
@@ -76,10 +95,13 @@ import { setOpenRouterClient } from "@sftinc/openrouter-agent";
 
 setOpenRouterClient({
   apiKey: process.env.OPENROUTER_API_KEY, // optional, falls back to env
-  model: "anthropic/claude-haiku-4.5",
-  max_tokens: 2000,
-  temperature: 0.3,
+  referer: "https://example.com",
   title: "my-app",
+  chat: {
+    model: "anthropic/claude-haiku-4.5",
+    max_tokens: 2000,
+    temperature: 0.3,
+  },
 });
 ```
 
@@ -89,15 +111,27 @@ See also: `OpenRouterClient`, `OpenRouterClientOptions`, `Agent`.
 
 ## `OpenRouterClient`
 
-Thin HTTP client for OpenRouter's `/chat/completions` endpoint. Holds the API key, optional attribution headers, and per-client `LLMConfig` defaults.
+Root HTTP client for OpenRouter. A thin shell around a shared `Transport` plus three namespace classes:
+
+- `client.chat` — `ChatNamespace` for `/chat/completions` (`complete`, `completeStream`).
+- `client.embeddings` — `EmbeddingsNamespace` for `/embeddings` (`create`).
+- `client.audio.transcriptions` — `TranscriptionsNamespace` for `/audio/transcriptions` (`create`).
+
+There is no top-level `model`, `embedModel`, `temperature`, etc. Every default lives under the namespace that consumes it.
 
 ### Signature
 
 ```ts
 class OpenRouterClient {
-  constructor(options: OpenRouterClientOptions);
+  constructor(options?: OpenRouterClientOptions);
 
-  get llmDefaults(): LLMConfig;
+  readonly chat: ChatNamespace;
+  readonly embeddings: EmbeddingsNamespace;
+  readonly audio: AudioNamespace; // exposes `audio.transcriptions`
+}
+
+class ChatNamespace {
+  get defaults(): LLMConfig;
 
   complete(
     request: CompletionsRequest,
@@ -108,43 +142,68 @@ class OpenRouterClient {
     request: CompletionsRequest,
     signalOrOptions?: AbortSignal | RequestOptions
   ): AsyncGenerator<CompletionChunk, void, void>;
+}
 
-  embed(
+class EmbeddingsNamespace {
+  get defaults(): EmbeddingsDefaults;
+
+  create(
     request: EmbedRequest,
     signalOrOptions?: AbortSignal | RequestOptions
   ): Promise<EmbedResponse>;
 }
+
+class TranscriptionsNamespace {
+  get defaults(): TranscriptionsDefaults;
+
+  create(
+    request: TranscriptionRequest,
+    signalOrOptions?: AbortSignal | RequestOptions
+  ): Promise<TranscriptionResponse>;
+}
 ```
 
-Source: `src/openrouter/client.ts:145-394`.
+Source: `src/openrouter/client.ts`, `src/openrouter/chat.ts`, `src/openrouter/embeddings.ts`, `src/openrouter/audio/transcriptions.ts`.
 
 ### Constructor parameters
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `options` | `OpenRouterClientOptions` | yes | — | API key, transport headers, and any `LLMConfig` defaults. See the `OpenRouterClientOptions` section below for field-by-field docs. |
+| `options` | `OpenRouterClientOptions` | no | `{}` | Transport options (`apiKey`, `referer`, `title`, `retry`) plus per-namespace defaults (`chat`, `embeddings`, `audio.transcriptions`). See the `OpenRouterClientOptions` section below for field-by-field docs. |
 
-The constructor splits `options` into `{ apiKey, title, referer }` (transport-level) and the remaining `LLMConfig` fields (stored as request-body defaults). If `apiKey` is absent it falls back to `process.env.OPENROUTER_API_KEY`; if neither is set it throws (`src/openrouter/client.ts:168-175`).
+The constructor builds a single private `Transport` from `{ apiKey, referer, title, retry }` and hands it to each namespace along with that namespace's defaults. If `apiKey` is absent it falls back to `process.env.OPENROUTER_API_KEY`; if neither is set the `Transport` constructor throws.
+
+The constructor also emits `console.warn` advisories when:
+
+- `title` is provided without `referer` — OpenRouter ignores `X-OpenRouter-Title` unless `HTTP-Referer` is also set.
+- `referer` is a localhost URL but `title` is omitted — OpenRouter requires both for localhost attribution.
 
 ### Errors
 
 - `Error("OPENROUTER_API_KEY is not set. Pass apiKey to the OpenRouterClient or set the env var.")` — thrown by the constructor when no key is available.
-- `OpenRouterError` — thrown by `complete` and `completeStream` on any non-2xx HTTP response, or when a streaming response has no body.
+- `OpenRouterError` — thrown by every namespace method on any non-2xx HTTP response.
+- `StreamTruncatedError` / `IdleTimeoutError` — thrown by `chat.complete` and `chat.completeStream` when an SSE stream truncates or stalls.
 
-### Properties
+### Namespace defaults
 
-#### `llmDefaults` (getter)
-
-Returns a fresh shallow copy of the per-client `LLMConfig` defaults. Mutating the returned object does not affect the client (`src/openrouter/client.ts:188-190`). The agent loop reads this to know what fields the client will already supply.
+Each namespace exposes a `defaults` getter that returns a fresh shallow copy of the per-namespace defaults supplied at construction time:
 
 ```ts
-const client = new OpenRouterClient({ model: "x-ai/grok-4", temperature: 0.5 });
-console.log(client.llmDefaults); // { model: "x-ai/grok-4", temperature: 0.5 }
+const client = new OpenRouterClient({
+  chat: { model: "x-ai/grok-4", temperature: 0.5 },
+  embeddings: { model: "openai/text-embedding-3-small" },
+  audio: { transcriptions: { model: "openai/whisper-1" } },
+});
+console.log(client.chat.defaults);                  // { model: "x-ai/grok-4", temperature: 0.5 }
+console.log(client.embeddings.defaults);            // { model: "openai/text-embedding-3-small" }
+console.log(client.audio.transcriptions.defaults);  // { model: "openai/whisper-1" }
 ```
 
-### Method: `complete`
+The agent loop reads `client.chat.defaults` to know which `LLMConfig` fields the client will already supply.
 
-POSTs a non-streaming chat completion and resolves to a parsed `CompletionsResponse`.
+### Method: `chat.complete`
+
+Drains `chat.completeStream` and assembles a single `CompletionsResponse`. The wire path is always streaming — both `complete` and `completeStream` POST `stream: true` upstream — but `complete` resolves once the stream is fully drained.
 
 #### Parameters
 
@@ -155,10 +214,10 @@ POSTs a non-streaming chat completion and resolves to a parsed `CompletionsRespo
 
 #### Body precedence (lowest → highest)
 
-1. `DEFAULT_MODEL` as the model fallback (`src/openrouter/client.ts:336-341`);
-2. this client's `LLMConfig` defaults;
+1. Hardcoded model fallback `"openai/gpt-5.4"`;
+2. this namespace's `LLMConfig` defaults (constructor `chat` option);
 3. fields on `request`;
-4. `stream: false` (always forced).
+4. `stream: true` (always forced; never overridable).
 
 #### Returns
 
@@ -173,14 +232,15 @@ POSTs a non-streaming chat completion and resolves to a parsed `CompletionsRespo
 - `429` — rate limited (check `metadata` for retry hints).
 - `503` — upstream provider unavailable.
 
+`StreamTruncatedError` if the SSE stream truncates mid-response.
+
 #### Side effects
 
-- Logs the parsed response to stdout when `process.env.OPENROUTER_DEBUG` is set (yellow if it contains tool calls; `src/openrouter/client.ts:367-374`).
-- Logs error responses to stderr (`src/openrouter/client.ts:352-353`).
+- Logs the parsed response to stdout when `process.env.OPENROUTER_DEBUG` is set (yellow if it contains tool calls).
 
 #### Retry behavior
 
-Connection-level retries are now at parity with `completeStream`: retryable HTTP statuses (`408`, `429`, `500`, `502`, `503`, `504`) and `fetch` rejections are retried with exponential-jittered backoff under the same `RetryConfig` and shared `RetryBudget`. The 2xx `response.json()` parse stays outside the retry loop so a successful response is never re-charged.
+Same connection-level retry semantics as `chat.completeStream` (they share a code path). Retryable HTTP statuses (`408`, `429`, `500`, `502`, `503`, `504`) and `fetch` rejections are retried with exponential-jittered backoff under the same `RetryConfig` and shared `RetryBudget`.
 
 #### Example
 
@@ -188,19 +248,18 @@ Connection-level retries are now at parity with `completeStream`: retryable HTTP
 import { OpenRouterClient } from "@sftinc/openrouter-agent";
 
 const client = new OpenRouterClient({
-  model: "anthropic/claude-haiku-4.5",
-  temperature: 0.2,
+  chat: { model: "anthropic/claude-haiku-4.5", temperature: 0.2 },
 });
 
-const res = await client.complete({
+const res = await client.chat.complete({
   messages: [{ role: "user", content: "Say hi." }],
 });
 console.log(res.choices[0]?.message.content);
 ```
 
-### Method: `completeStream`
+### Method: `chat.completeStream`
 
-POSTs a streaming chat completion and yields parsed SSE `CompletionChunk` values as they arrive. The final chunk before the `[DONE]` sentinel typically carries `usage` with an empty `choices` array.
+POSTs a chat completion with `stream: true` and yields parsed SSE `CompletionChunk` values as they arrive. The final chunk before the `[DONE]` sentinel typically carries `usage` with an empty `choices` array.
 
 #### Parameters
 
@@ -211,41 +270,43 @@ POSTs a streaming chat completion and yields parsed SSE `CompletionChunk` values
 
 #### Body precedence (lowest → highest)
 
-1. `DEFAULT_MODEL` as the model fallback;
-2. this client's `LLMConfig` defaults;
+1. Hardcoded model fallback `"openai/gpt-5.4"`;
+2. this namespace's `LLMConfig` defaults (constructor `chat` option);
 3. fields on `request`;
-4. `stream: true` (always forced; `src/openrouter/client.ts:238-243`).
+4. `stream: true` (always forced; never overridable).
 
 #### Returns
 
-`AsyncGenerator<CompletionChunk, void, void>`. The generator returns when `[DONE]` is seen or the body closes. On early abandonment (e.g. `break` in the consumer), `response.body.cancel()` is invoked in a `finally` block to release network resources (`src/openrouter/client.ts:290-299`).
+`AsyncGenerator<CompletionChunk, void, void>`. The generator returns when `[DONE]` is seen or the body closes. On early abandonment (e.g. `break` in the consumer), `response.body.cancel()` is invoked in a `finally` block to release network resources.
 
 #### Throws
 
 - `OpenRouterError` on non-2xx responses (thrown before any chunks are yielded).
-- `OpenRouterError` with a `"streaming response had no body"` message when the response is OK but `response.body` is `null` (`src/openrouter/client.ts:266-271`).
+- `StreamTruncatedError` with a `"streaming response had no body"` message when the response is OK but `response.body` is `null`.
 - Re-throws any error from the SSE parser (e.g. malformed JSON in a `data:` frame).
 - `StreamTruncatedError` when the SSE body ends without a `[DONE]` sentinel and without a terminal `finish_reason`. Aborts the underlying `fetch` before throwing so the socket is freed.
 - `IdleTimeoutError` when no chunk arrives within the configured `idleTimeoutMs` window. Aborts the underlying `fetch` before throwing so the socket is freed.
 
 #### Retry behavior
 
-When called via `Agent.run`, `completeStream` participates in a per-turn `RetryBudget` for **connection-level** failures: `fetch` rejections (DNS, ECONNRESET, ECONNREFUSED, ETIMEDOUT, TLS) and retryable response statuses (`408`, `429`, `500`, `502`, `503`, `504`). Each retry honors `Retry-After` (capped at the configured `maxDelayMs`) and uses exponential backoff with full jitter. Stream-level failures (`StreamTruncatedError`, `IdleTimeoutError`, mid-stream provider errors) are retried by the loop layer, not by `completeStream` — see [agent.md `Retry behavior`](./agent.md#retry-behavior). The same budget is shared across both layers; budgets do **not** compound.
+When called via `Agent.run`, `chat.completeStream` participates in a per-turn `RetryBudget` for **connection-level** failures: `fetch` rejections (DNS, ECONNRESET, ECONNREFUSED, ETIMEDOUT, TLS) and retryable response statuses (`408`, `429`, `500`, `502`, `503`, `504`). Each retry honors `Retry-After` (capped at the configured `maxDelayMs`) and uses exponential backoff with full jitter. Stream-level failures (`StreamTruncatedError`, `IdleTimeoutError`, mid-stream provider errors) are retried by the loop layer, not by `chat.completeStream` — see [agent.md `Retry behavior`](./agent.md#retry-behavior). The same budget is shared across both layers; budgets do **not** compound.
 
-Direct callers of `OpenRouterClient.completeStream` (without `Agent`) get connection-level retries with the default `RetryConfig`. To opt out, construct the client with `{ retry: { maxAttempts: 1 } }`.
+Direct callers of `chat.completeStream` (without `Agent`) get connection-level retries with the default `RetryConfig`. To opt out, construct the client with `{ retry: { maxAttempts: 1 } }`.
 
 #### Side effects
 
-- When `process.env.OPENROUTER_DEBUG` is set, every chunk is captured and reassembled via the internal `assembleCompletionsResponse` helper, then logged after the stream completes (`src/openrouter/client.ts:273-289`).
+- When `process.env.OPENROUTER_DEBUG` is set, every chunk is captured and reassembled, then logged after the stream completes.
 
 #### Example
 
 ```ts
 import { OpenRouterClient } from "@sftinc/openrouter-agent";
 
-const client = new OpenRouterClient({ model: "anthropic/claude-haiku-4.5" });
+const client = new OpenRouterClient({
+  chat: { model: "anthropic/claude-haiku-4.5" },
+});
 
-for await (const chunk of client.completeStream({
+for await (const chunk of client.chat.completeStream({
   messages: [{ role: "user", content: "Stream this." }],
 })) {
   process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
@@ -254,7 +315,7 @@ for await (const chunk of client.completeStream({
 
 See also: `OpenRouterError`, `CompletionsRequest`, `CompletionsResponse`, `CompletionChunk`, `parseSseStream`.
 
-### Method: `embed`
+### Method: `embeddings.create`
 
 POSTs a non-streaming embeddings request to `${BASE_URL}/embeddings` and resolves to a parsed `EmbedResponse`.
 
@@ -262,14 +323,14 @@ POSTs a non-streaming embeddings request to `${BASE_URL}/embeddings` and resolve
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `request` | `EmbedRequest` | yes | — | The embed request body. `input` is required. `model` falls back to `OpenRouterClient.embedModel` if set. |
+| `request` | `EmbedRequest` | yes | — | The embed request body. `input` is required. `model` falls back to `EmbeddingsDefaults.model`, then to `"openai/text-embedding-3-small"`. |
 | `signalOrOptions` | `AbortSignal \| RequestOptions` | no | `undefined` | Cancellation/options. Bare `AbortSignal` is supported for back-compat. |
 
-#### Model precedence
+#### Model precedence (lowest → highest)
 
-1. `request.model` (highest);
-2. `OpenRouterClient.embedModel` (constructor option);
-3. **No package-level default.** `embed()` throws `Error("No embedding model: ...")` when neither is set.
+1. Hardcoded fallback `"openai/text-embedding-3-small"`;
+2. `EmbeddingsDefaults.model` (constructor `embeddings` option);
+3. `request.model` per call.
 
 #### Returns
 
@@ -277,17 +338,15 @@ POSTs a non-streaming embeddings request to `${BASE_URL}/embeddings` and resolve
 
 #### Throws
 
-- `Error` — when neither `request.model` nor the client's `embedModel` is set.
 - `OpenRouterError` — on any non-2xx response after retries. Common codes: `400` (bad input/dimensions unsupported), `401` (auth), `402` (credits), `429` (rate limited), `503` (provider down).
 
 #### Side effects
 
-- Logs error responses to stderr with the `[openrouter:embed] error response:` prefix.
-- Logs the parsed response to stdout with the `[openrouter:embed] response:` prefix when `process.env.OPENROUTER_DEBUG` is set.
+- Logs the parsed response to stdout with the `[openrouter:embed] response:` prefix when `process.env.OPENROUTER_DEBUG` is set. Embedding vectors are redacted to `<N dims omitted>` to keep logs readable.
 
 #### Retry behavior
 
-Same connection-level retry semantics as `complete` and `completeStream`. The 2xx JSON parse stays outside the retry loop so a successful embedding is never re-charged.
+Same connection-level retry semantics as `chat.complete` / `chat.completeStream`. The 2xx JSON parse stays outside the retry loop so a successful embedding is never re-charged.
 
 #### Example
 
@@ -296,10 +355,10 @@ import { OpenRouterClient } from "@sftinc/openrouter-agent";
 
 const client = new OpenRouterClient({
   apiKey: process.env.OPENROUTER_API_KEY,
-  embedModel: "qwen/qwen3-embedding-8b",
+  embeddings: { model: "qwen/qwen3-embedding-8b" },
 });
 
-const res = await client.embed({
+const res = await client.embeddings.create({
   input: ["hello", "world"],
   dimensions: 1536,
 });
@@ -307,7 +366,60 @@ const res = await client.embed({
 const vectors = res.data.map((d) => d.embedding as number[]);
 ```
 
-See also: `EmbedRequest`, `EmbedResponse`, `OpenRouterError`, `RequestOptions`.
+See also: `EmbedRequest`, `EmbedResponse`, `EmbeddingsDefaults`, `OpenRouterError`, `RequestOptions`.
+
+### Method: `audio.transcriptions.create`
+
+POSTs a transcription request to `${BASE_URL}/audio/transcriptions` and resolves to a parsed `TranscriptionResponse`.
+
+#### Parameters
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `request` | `TranscriptionRequest` | yes | — | The transcription request body. `input_audio` is required (`{ data: <base64>, format }`). `model` falls back to `TranscriptionsDefaults.model`, then to `"openai/gpt-4o-mini-transcribe"`. |
+| `signalOrOptions` | `AbortSignal \| RequestOptions` | no | `undefined` | Cancellation/options. Bare `AbortSignal` is supported for back-compat. |
+
+#### Model precedence (lowest → highest)
+
+1. Hardcoded fallback `"openai/gpt-4o-mini-transcribe"`;
+2. `TranscriptionsDefaults.model` (constructor `audio.transcriptions` option);
+3. `request.model` per call.
+
+#### Returns
+
+`Promise<TranscriptionResponse>`.
+
+#### Throws
+
+- `OpenRouterError` — on any non-2xx response after retries.
+
+#### Side effects
+
+- When `process.env.OPENROUTER_DEBUG` is set, logs request metadata (model, format, language, temperature, provider) and the parsed response. The base64 audio payload is **never** logged.
+
+#### Retry behavior
+
+Same connection-level retry semantics as the other namespace methods.
+
+#### Example
+
+```ts
+import fs from "node:fs/promises";
+import { OpenRouterClient } from "@sftinc/openrouter-agent";
+
+const client = new OpenRouterClient({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  audio: { transcriptions: { model: "openai/whisper-1", language: "en" } },
+});
+
+const audio = await fs.readFile("voice.wav");
+const res = await client.audio.transcriptions.create({
+  input_audio: { data: audio.toString("base64"), format: "wav" },
+});
+console.log(res.text);
+```
+
+See also: `TranscriptionRequest`, `TranscriptionResponse`, `TranscriptionsDefaults`, `TranscriptionProviderOptions`, `OpenRouterError`, `RequestOptions`.
 
 ---
 
@@ -361,7 +473,7 @@ Source: `src/openrouter/client.ts:55-77`. The `retryAfterMs` field is parsed fro
 import { OpenRouterError } from "@sftinc/openrouter-agent";
 
 try {
-  await client.complete({ messages });
+  await client.chat.complete({ messages });
 } catch (err) {
   if (err instanceof OpenRouterError) {
     if (err.code === 429) console.warn("rate limited", err.metadata);
@@ -374,62 +486,46 @@ See also: `OpenRouterClient`, `ErrorResponse`.
 
 ---
 
-## `DEFAULT_MODEL`
-
-The hardcoded fallback model slug used when no `model` is supplied at any layer of the config-merge chain (request > client defaults > this constant).
-
-### Signature
-
-```ts
-const DEFAULT_MODEL: "anthropic/claude-haiku-4.5";
-```
-
-Source: `src/openrouter/types.ts:441`.
-
-### Example
-
-```ts
-import { DEFAULT_MODEL, OpenRouterClient } from "@sftinc/openrouter-agent";
-
-console.log(DEFAULT_MODEL); // "anthropic/claude-haiku-4.5"
-
-// Build a client that explicitly opts into the fallback:
-const client = new OpenRouterClient({ model: DEFAULT_MODEL });
-```
-
-See also: `LLMConfig.model`, `OpenRouterClient`.
-
----
-
 ## `OpenRouterClientOptions`
 
-Constructor argument for `OpenRouterClient`. Extends `LLMConfig` (so every LLM knob is also a client default), plus three transport-level fields. Source: `src/openrouter/client.ts:99-116`.
+Constructor argument for `OpenRouterClient`. Top-level fields are transport-shared (`apiKey`, `referer`, `title`, `retry`); per-modality defaults live under `chat`, `embeddings`, and `audio.transcriptions`. There are no top-level `LLMConfig` fields — every LLM knob lives under `chat`. Source: `src/openrouter/client.ts`.
 
 ### Fields
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `apiKey` | `string` | no | `process.env.OPENROUTER_API_KEY` | OpenRouter API key. The constructor throws if neither this nor the env var is set. |
-| `title` | `string` | no | `undefined` | Human-readable site/app name, sent as the `X-OpenRouter-Title` header for OpenRouter rankings/attribution. |
+| `apiKey` | `string` | no | `process.env.OPENROUTER_API_KEY` | OpenRouter API key. The `Transport` constructor throws if neither this nor the env var is set. |
 | `referer` | `string` | no | `undefined` | Referer URL, sent as the `HTTP-Referer` header for OpenRouter rankings/attribution. |
-| `embedModel` | `string` | no | `undefined` | Default embedding model used by `embed()` when `EmbedRequest.model` is omitted. No package-level default — `embed()` throws if neither is set. |
-| …all `LLMConfig` fields | see `LLMConfig` | no | — | Used as per-client defaults on every request body. Stripped of `apiKey`/`title`/`referer` before being merged. |
+| `title` | `string` | no | `undefined` | Human-readable site/app name, sent as the `X-OpenRouter-Title` header. OpenRouter ignores it unless `referer` is also set; the constructor warns on mismatched configurations (including localhost referers without a title). |
+| `retry` | `RetryConfig` | no | built-in defaults | Retry policy shared across all namespaces. See [Retry surface](#retry-surface). |
+| `chat` | `LLMConfig` | no | `{}` | Per-call defaults for `client.chat.complete` / `client.chat.completeStream`. Every `LLMConfig` field (`model`, `temperature`, `max_tokens`, `top_p`, `reasoning`, `response_format`, …) is valid here. Falls back to `"openai/gpt-5.4"` when `model` is omitted at every layer. |
+| `embeddings` | `EmbeddingsDefaults` | no | `{}` | Per-call defaults for `client.embeddings.create`. Falls back to `"openai/text-embedding-3-small"` when `model` is omitted at every layer. |
+| `audio` | `{ transcriptions?: TranscriptionsDefaults }` | no | `{}` | Container for audio sub-namespace defaults. `audio.transcriptions` falls back to `"openai/gpt-4o-mini-transcribe"` when `model` is omitted at every layer. |
 
 ### Example
 
 ```ts
 const options: OpenRouterClientOptions = {
   apiKey: process.env.OPENROUTER_API_KEY,
-  title: "my-app",
   referer: "https://example.com",
-  model: "anthropic/claude-haiku-4.5",
-  max_tokens: 2000,
-  temperature: 0.3,
-  reasoning: { effort: "low" },
+  title: "my-app",
+  chat: {
+    model: "anthropic/claude-haiku-4.5",
+    max_tokens: 2000,
+    temperature: 0.3,
+    reasoning: { effort: "low" },
+  },
+  embeddings: {
+    model: "qwen/qwen3-embedding-8b",
+    dimensions: 1536,
+  },
+  audio: {
+    transcriptions: { model: "openai/whisper-1", language: "en" },
+  },
 };
 ```
 
-See also: `LLMConfig`, `OpenRouterClient`, `setOpenRouterClient`.
+See also: `LLMConfig`, `EmbeddingsDefaults`, `TranscriptionsDefaults`, `OpenRouterClient`, `setOpenRouterClient`.
 
 ---
 
@@ -441,7 +537,7 @@ The canonical "knobs" shape — every wire-body field except `messages` and `too
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `model` | `string` | no | `DEFAULT_MODEL` (i.e. `"anthropic/claude-haiku-4.5"`) | Model slug. Falls back through every layer to `DEFAULT_MODEL`. |
+| `model` | `string` | no | `"openai/gpt-5.4"` | Chat model slug. Falls back through every layer (request → namespace defaults → hardcoded fallback `"openai/gpt-5.4"`). |
 | `max_tokens` | `number` | no | provider default | Hard cap on completion tokens. Range `[1, context_length)`. |
 | `temperature` | `number` | no | provider default (typically `1.0`) | Sampling temperature, range `[0, 2]`. Higher = more random. |
 | `top_p` | `number` | no | provider default (typically `1.0`) | Nucleus sampling cutoff, range `(0, 1]`. |
@@ -490,7 +586,7 @@ const cfg: LLMConfig = {
 };
 ```
 
-See also: `CompletionsRequest`, `OpenRouterClientOptions`, `DEFAULT_MODEL`.
+See also: `CompletionsRequest`, `OpenRouterClientOptions`.
 
 ---
 
@@ -575,7 +671,7 @@ Body POSTed to `/chat/completions`. Extends `LLMConfig` with the two fields the 
 | --- | --- | --- | --- | --- |
 | `messages` | `Message[]` | yes | — | Full conversation history including the current turn. |
 | `tools` | `OpenRouterTool[]` | no | none | Tools available to the model on this turn. |
-| `stream` | `boolean` | no | client-method-controlled | Whether to stream via SSE. `OpenRouterClient.complete` hardcodes `false`; `OpenRouterClient.completeStream` hardcodes `true`. Callers normally leave this unset. |
+| `stream` | `boolean` | no | client-method-controlled | Whether to stream via SSE. Both `client.chat.complete` and `client.chat.completeStream` hardcode `stream: true` upstream; `complete` simply drains the stream and returns one assembled response. Callers normally leave this unset. |
 | …all `LLMConfig` fields | see `LLMConfig` | no | — | Per-call overrides for any LLM knob. |
 
 ### Example
@@ -591,13 +687,13 @@ const req: CompletionsRequest = {
 };
 ```
 
-See also: `LLMConfig`, `Message`, `OpenRouterTool`, `OpenRouterClient.complete`.
+See also: `LLMConfig`, `Message`, `OpenRouterTool`, `OpenRouterClient` (`chat.complete`).
 
 ---
 
 ## `CompletionsResponse`
 
-Full non-streaming response from `/chat/completions`. Returned by `OpenRouterClient.complete`. Source: `src/openrouter/types.ts:329-344`.
+Full non-streaming response from `/chat/completions`. Returned by `client.chat.complete`. Source: `src/openrouter/types.ts:329-344`.
 
 ### Fields
 
@@ -626,7 +722,7 @@ Full non-streaming response from `/chat/completions`. Returned by `OpenRouterCli
 ### Example
 
 ```ts
-const res: CompletionsResponse = await client.complete({ messages });
+const res: CompletionsResponse = await client.chat.complete({ messages });
 const text = res.choices[0]?.message.content ?? "";
 const usage = res.usage; // { prompt_tokens, completion_tokens, total_tokens, ... }
 ```
@@ -637,13 +733,13 @@ See also: `CompletionsRequest`, `NonStreamingChoice`, `Annotation`, `Usage`.
 
 ## `EmbedRequest`
 
-Body POSTed to `/embeddings`. OpenAI-compatible passthrough; `model` is optional because it falls back through `OpenRouterClient.embedModel`. Source: `src/openrouter/client.ts`.
+Body POSTed to `/embeddings`. OpenAI-compatible passthrough; `model` is optional because it falls back through `EmbeddingsDefaults.model` and then to a hardcoded fallback. Source: `src/openrouter/client.ts`.
 
 ### Fields
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `model` | `string` | no | `OpenRouterClient.embedModel` | Embedding model id. Throws if neither this nor the client default is set — there is no package-level default. |
+| `model` | `string` | no | `EmbeddingsDefaults.model`, then `"openai/text-embedding-3-small"` | Embedding model id. |
 | `input` | `string \| string[]` | yes | — | Text(s) to embed. Multimodal and token-id inputs are valid upstream but deliberately excluded from this type for v1; widening later is non-breaking. |
 | `dimensions` | `number` | no | provider default | Output dimensionality. Rejected by models that do not support it. |
 | `encoding_format` | `"float" \| "base64"` | no | `"float"` | `"base64"` returns each vector as a base64 string. |
@@ -660,13 +756,13 @@ const req: EmbedRequest = {
 };
 ```
 
-See also: `OpenRouterClient.embed`, `EmbedResponse`.
+See also: `OpenRouterClient` (`embeddings.create`), `EmbedResponse`, `EmbeddingsDefaults`.
 
 ---
 
 ## `EmbedResponse`
 
-Parsed response from `OpenRouterClient.embed`. Faithful to the OpenRouter (OpenAI-compatible) embeddings response — `cost` and `prompt_tokens_details` are inconsistently populated and so are typed as optional, mirroring how `CompletionsResponse` handles partial provider support. Source: `src/openrouter/client.ts`.
+Parsed response from `client.embeddings.create`. Faithful to the OpenRouter (OpenAI-compatible) embeddings response — `cost` and `prompt_tokens_details` are inconsistently populated and so are typed as optional, mirroring how `CompletionsResponse` handles partial provider support. Source: `src/openrouter/client.ts`.
 
 ### Fields
 
@@ -684,7 +780,7 @@ Parsed response from `OpenRouterClient.embed`. Faithful to the OpenRouter (OpenA
 ### Example
 
 ```ts
-const res = await client.embed({ model: "m", input: "hi" });
+const res = await client.embeddings.create({ model: "m", input: "hi" });
 const vec = res.data[0].embedding;
 if (typeof vec === "string") {
   // base64 — only when encoding_format was "base64"
@@ -693,7 +789,156 @@ if (typeof vec === "string") {
 }
 ```
 
-See also: `EmbedRequest`, `OpenRouterClient.embed`.
+See also: `EmbedRequest`, `EmbeddingsDefaults`, `OpenRouterClient` (`embeddings.create`).
+
+---
+
+## `EmbeddingsDefaults`
+
+Per-namespace defaults applied to every `client.embeddings.create` request unless overridden per call. Field-level resolution: per-call request → these defaults → hardcoded fallback (`model` only). Source: `src/openrouter/client.ts`.
+
+### Fields
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `model` | `string` | no | `"openai/text-embedding-3-small"` | Default embedding model. |
+| `dimensions` | `number` | no | provider default | Default output dimensionality. |
+| `encoding_format` | `"float" \| "base64"` | no | `"float"` | Default output encoding. |
+| `input_type` | `string` | no | none | Default provider-specific input classification. |
+| `user` | `string` | no | none | Default end-user identifier forwarded to the provider. |
+
+### Example
+
+```ts
+const client = new OpenRouterClient({
+  embeddings: {
+    model: "qwen/qwen3-embedding-8b",
+    dimensions: 1536,
+    encoding_format: "float",
+  },
+});
+```
+
+See also: `EmbedRequest`, `EmbedResponse`, `OpenRouterClientOptions`.
+
+---
+
+## `TranscriptionRequest`
+
+Body POSTed to `/audio/transcriptions`. `input_audio.data` is base64-encoded raw bytes — **not** a data URI. The client does not transform or validate it. Source: `src/openrouter/audio/transcriptions.types.ts`.
+
+### Fields
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `model` | `string` | no | `TranscriptionsDefaults.model`, then `"openai/gpt-4o-mini-transcribe"` | Transcription model slug. |
+| `input_audio.data` | `string` | yes | — | Base64-encoded raw audio bytes (NOT a data URI). |
+| `input_audio.format` | `"wav" \| "mp3" \| "flac" \| "m4a" \| "ogg" \| "webm" \| "aac"` | yes | — | Audio container format. Provider support varies. |
+| `language` | `string` | no | auto-detected | ISO-639-1 language hint (e.g. `"en"`, `"ja"`). |
+| `temperature` | `number` | no | provider default | Sampling temperature in `[0, 1]`. Lower = more deterministic. |
+| `provider` | `TranscriptionProviderOptions` | no | none | Provider-specific passthrough. |
+| `user` | `string` | no | none | End-user identifier forwarded to the provider. |
+
+### Example
+
+```ts
+import fs from "node:fs/promises";
+
+const audio = await fs.readFile("voice.wav");
+const req: TranscriptionRequest = {
+  model: "openai/gpt-4o-mini-transcribe",
+  input_audio: { data: audio.toString("base64"), format: "wav" },
+  language: "en",
+};
+```
+
+See also: `TranscriptionResponse`, `TranscriptionsDefaults`, `TranscriptionProviderOptions`, `OpenRouterClient` (`audio.transcriptions.create`).
+
+---
+
+## `TranscriptionResponse`
+
+Parsed response from `client.audio.transcriptions.create`. `text` is always populated on success; `usage` is typed as optional to mirror defensive handling of providers that omit it. Source: `src/openrouter/audio/transcriptions.types.ts`.
+
+### Fields
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `text` | `string` | yes | — | The transcribed text. |
+| `usage.seconds` | `number` | no | — | Duration of the input audio in seconds. |
+| `usage.total_tokens` | `number` | yes (within `usage`) | — | Total tokens billed (input + output). |
+| `usage.input_tokens` | `number` | yes (within `usage`) | — | Input tokens billed. |
+| `usage.output_tokens` | `number` | yes (within `usage`) | — | Output tokens generated. |
+| `usage.cost` | `number` | no | — | Optional cost in USD. |
+
+### Example
+
+```ts
+const res = await client.audio.transcriptions.create({
+  input_audio: { data: audio.toString("base64"), format: "wav" },
+});
+console.log(res.text);
+if (res.usage?.seconds !== undefined) {
+  console.log(`audio length: ${res.usage.seconds}s`);
+}
+```
+
+See also: `TranscriptionRequest`, `TranscriptionsDefaults`, `OpenRouterClient` (`audio.transcriptions.create`).
+
+---
+
+## `TranscriptionsDefaults`
+
+Per-namespace defaults applied to every `client.audio.transcriptions.create` request unless overridden per call. Field-level resolution: per-call request → these defaults → hardcoded fallback (`model` only). Source: `src/openrouter/audio/transcriptions.types.ts`.
+
+### Fields
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `model` | `string` | no | `"openai/gpt-4o-mini-transcribe"` | Default transcription model. |
+| `language` | `string` | no | auto-detected | Default ISO-639-1 language hint. |
+| `temperature` | `number` | no | provider default | Default sampling temperature. |
+| `provider` | `TranscriptionProviderOptions` | no | none | Default provider-specific passthrough. |
+
+### Example
+
+```ts
+const client = new OpenRouterClient({
+  audio: {
+    transcriptions: {
+      model: "openai/whisper-1",
+      language: "en",
+      temperature: 0,
+    },
+  },
+});
+```
+
+See also: `TranscriptionRequest`, `TranscriptionResponse`, `TranscriptionProviderOptions`, `OpenRouterClientOptions`.
+
+---
+
+## `TranscriptionProviderOptions`
+
+Provider-specific options forwarded to OpenRouter's transcription endpoint. Keyed by provider slug; only the matched provider's options are forwarded upstream. Source: `src/openrouter/audio/transcriptions.types.ts`.
+
+### Fields
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `options` | `Record<string, Record<string, unknown>>` | no | none | Per-provider options bag. Inner record is provider-specific. |
+
+### Example
+
+```ts
+const provider: TranscriptionProviderOptions = {
+  options: {
+    groq: { prompt: "Expected vocabulary: OpenRouter, API" },
+  },
+};
+```
+
+See also: `TranscriptionRequest`, `TranscriptionsDefaults`.
 
 ---
 
@@ -751,7 +996,7 @@ Incremental tool-call piece from a streaming response. `index` identifies which 
 
 ```ts
 const acc = new Map<number, { id?: string; name?: string; args: string }>();
-for await (const chunk of client.completeStream({ messages, tools })) {
+for await (const chunk of client.chat.completeStream({ messages, tools })) {
   for (const sc of chunk.choices) {
     for (const td of sc.delta.tool_calls ?? []) {
       const cur = acc.get(td.index) ?? { args: "" };
@@ -830,7 +1075,7 @@ The retry surface lives in `src/openrouter/retry.ts` and `src/openrouter/errors.
 
 Knobs governing retry behavior. Surfaced on:
 
-- `OpenRouterClientOptions.retry` — applied to direct `OpenRouterClient.completeStream` callers (and any other client method that retries).
+- `OpenRouterClientOptions.retry` — applied to every namespace method (`chat.complete`, `chat.completeStream`, `embeddings.create`, `audio.transcriptions.create`).
 - `AgentConfig.retry` — applied to every run started by an Agent.
 - `AgentRunOptions.retry` — per-run shallow-merge override.
 
@@ -916,7 +1161,7 @@ class IdleTimeoutError extends Error {
 
 ### `RequestOptions`
 
-Options accepted as the second argument to `OpenRouterClient.complete`, `completeStream`, and `embed`. Each method also accepts a bare `AbortSignal` for back-compat.
+Options accepted as the second argument to every namespace method (`chat.complete`, `chat.completeStream`, `embeddings.create`, `audio.transcriptions.create`). Each method also accepts a bare `AbortSignal` for back-compat.
 
 ```ts
 export interface RequestOptions {
@@ -971,7 +1216,7 @@ The following symbols live in `src/openrouter/` but are **not** re-exported from
 | Symbol | Where | Status | Notes |
 | --- | --- | --- | --- |
 | `getOpenRouterClient` | `src/openrouter/default.ts:68-70` | Folder-exported, **not** package-exported | Internal accessor used by the `Agent` constructor to read the project-singleton client (returns `undefined` if none registered). External consumers should not rely on it. |
-| `parseSseStream` | `src/openrouter/sse.ts:47-93` | Folder-exported, **not** package-exported | Low-level SSE parser used by `OpenRouterClient.completeStream`. Yields the JSON-parsed payload of each non-empty `data:` frame; terminates on the `[DONE]` sentinel. Exported from the folder so callers that want to consume an OpenRouter SSE stream directly can do so without going through the client. |
+| `parseSseStream` | `src/openrouter/sse.ts:47-93` | Folder-exported, **not** package-exported | Low-level SSE parser used by `client.chat.completeStream`. Yields the JSON-parsed payload of each non-empty `data:` frame; terminates on the `[DONE]` sentinel. Exported from the folder so callers that want to consume an OpenRouter SSE stream directly can do so without going through the client. |
 | `FunctionTool` / `DatetimeServerTool` / `WebSearchServerTool` (types) | `src/openrouter/types.ts` | Folder-exported, **not** package-exported | The three variants of `OpenRouterTool`. Use `OpenRouterTool` from the package root and discriminate on `type`. |
 | `NonStreamingChoice` / `StreamingChoice` / `CompletionChunk` / `ToolCallDelta` / `ErrorResponse` / `Annotation` / `UrlCitationAnnotation` | `src/openrouter/types.ts` | Folder-exported, **not** package-exported | Wire-shape detail types. Useful when consuming raw `OpenRouterClient` responses or building an SSE consumer; not needed for the high-level `Agent` API. |
 | `assembleCompletionsResponse` | `src/openrouter/client.ts:417-509` | **Not exported** | Folds streaming chunks into a single `CompletionsResponse` for `OPENROUTER_DEBUG` logging only; not on any export path. |
