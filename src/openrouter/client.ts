@@ -25,13 +25,12 @@ import { DEFAULT_MODEL } from './types.js'
 import { parseSseStream } from './sse.js'
 import { StreamTruncatedError, OpenRouterError } from './errors.js'
 import {
-	parseRetryAfter,
-	withRetry,
 	createRetryBudget,
 	resolveRetryConfig,
 	type RetryConfig,
 	type RetryBudget,
 } from './retry.js'
+import { Transport } from './transport.js'
 
 export { OpenRouterError } from './errors.js'
 
@@ -275,30 +274,7 @@ export interface EmbeddingsDefaults {
 	user?: string
 }
 
-/**
- * Base URL for the OpenRouter v1 API. All endpoints in this client are
- * formed by appending a path (e.g. `/chat/completions`).
- */
-const BASE_URL = 'https://openrouter.ai/api/v1'
-
-/**
- * Returns `true` if `value` parses as a URL whose host is a loopback name
- * (`localhost`) or a loopback IP literal (`127.0.0.0/8`, `::1`). OpenRouter
- * treats such referers as a special case: app-tracking only kicks in when
- * `X-OpenRouter-Title` is also sent.
- *
- * Falls back to `false` for unparseable strings — those are not blocked,
- * they just don't trigger the localhost-specific warning.
- */
-function isLocalhostUrl(value: string): boolean {
-	try {
-		const { hostname } = new URL(value)
-		if (hostname === 'localhost' || hostname === '::1') return true
-		return /^127(?:\.\d{1,3}){3}$/.test(hostname)
-	} catch {
-		return false
-	}
-}
+import { isLocalhostUrl } from './transport.js'
 
 /**
  * Thin HTTP client for OpenRouter's `/chat/completions` endpoint. Holds the
@@ -322,16 +298,10 @@ function isLocalhostUrl(value: string): boolean {
  * ```
  */
 export class OpenRouterClient {
-	/** Resolved API key (constructor argument or `OPENROUTER_API_KEY`). */
-	private readonly apiKey: string
-	/** Optional `HTTP-Referer` header value. */
-	private readonly referer?: string
-	/** Optional `X-OpenRouter-Title` header value. */
-	private readonly title?: string
+	/** Shared HTTP transport (auth, attribution, retry, fetch). */
+	private readonly transport: Transport
 	/** Per-client {@link LLMConfig} defaults applied to every request. */
 	private readonly defaults: LLMConfig
-	/** Resolved retry policy. Always a fully-populated config (no `undefined` fields). */
-	private readonly retry: ReturnType<typeof resolveRetryConfig>
 	/** Default embedding model. Used by `embed()` when the request omits `model`. */
 	private readonly embedModel?: string
 
@@ -350,11 +320,6 @@ export class OpenRouterClient {
 	 */
 	constructor(options: OpenRouterClientOptions) {
 		const { apiKey, title, referer, retry, embedModel, ...llmDefaults } = options
-		const envKey = typeof process !== 'undefined' ? process.env?.OPENROUTER_API_KEY : undefined
-		const key = apiKey ?? envKey
-		if (!key) {
-			throw new Error('OPENROUTER_API_KEY is not set. Pass apiKey to the OpenRouterClient or set the env var.')
-		}
 		if (title && !referer) {
 			console.warn(
 				'[OpenRouterClient] `title` was provided without `referer`. OpenRouter ignores `X-OpenRouter-Title` unless `HTTP-Referer` is also set, so the title will not appear in OpenRouter logs or rankings. See https://openrouter.ai/docs/app-attribution',
@@ -365,11 +330,8 @@ export class OpenRouterClient {
 				`[OpenRouterClient] \`referer\` is a localhost URL (${referer}) but \`title\` was not provided. OpenRouter requires \`X-OpenRouter-Title\` alongside a localhost \`HTTP-Referer\` for the app to be tracked. See https://openrouter.ai/docs/app-attribution`,
 			)
 		}
-		this.apiKey = key
-		this.title = title
-		this.referer = referer
+		this.transport = new Transport({ apiKey, title, referer, retry })
 		this.defaults = llmDefaults
-		this.retry = resolveRetryConfig(retry)
 		this.embedModel = embedModel
 	}
 
@@ -437,61 +399,28 @@ export class OpenRouterClient {
 			signalOrOptions instanceof AbortSignal
 				? { signal: signalOrOptions }
 				: (signalOrOptions ?? {})
-		const signal = opts.signal
 		const config = opts.retryConfig
-			? resolveRetryConfig({ ...this.retry, ...opts.retryConfig })
-			: this.retry
+			? resolveRetryConfig({ ...this.transport.retry, ...opts.retryConfig })
+			: this.transport.retry
 		const budget = opts.retryBudget ?? createRetryBudget(config)
+
+		const body = {
+			model: DEFAULT_MODEL,
+			...this.defaults,
+			...request,
+			stream: true as const,
+		}
 
 		// Connection-level retry. Only governs the fetch + non-2xx response
 		// path; once any chunk has been yielded the loop layer takes over.
 		// The B2 boundary (no retry past the first content delta) cannot be
 		// crossed at this layer because no chunks have been observed yet.
-		const response = await withRetry(
-			async () => {
-				const headers = this.buildHeaders({ Accept: 'text/event-stream' })
-
-				const body = {
-					model: DEFAULT_MODEL,
-					...this.defaults,
-					...request,
-					stream: true as const,
-				}
-
-				const res = await fetch(`${BASE_URL}/chat/completions`, {
-					method: 'POST',
-					headers,
-					body: JSON.stringify(body),
-					signal,
-				})
-
-				if (!res.ok) {
-					const errBody = await this.safeParseJson(res)
-					// eslint-disable-next-line no-console
-					console.error('[openrouter:stream] error response:', res.status, JSON.stringify(errBody))
-					const message =
-						(errBody as { error?: { message?: string } } | undefined)?.error?.message ??
-						`HTTP ${res.status}`
-					const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)?.error?.metadata
-					throw new OpenRouterError({
-						code: res.status,
-						message,
-						body: errBody,
-						metadata,
-						retryAfterMs: parseRetryAfter(res.headers.get('Retry-After')),
-					})
-				}
-
-				if (!res.body) {
-					throw new OpenRouterError({
-						code: res.status,
-						message: 'streaming response had no body',
-					})
-				}
-
-				return res
-			},
-			{ budget, config, signal },
+		const response = await this.transport.fetchWithRetry(
+			'/chat/completions',
+			{ method: 'POST', body: JSON.stringify(body) },
+			{ signal: opts.signal, retryBudget: budget, retryConfig: config },
+			'[openrouter:stream]',
+			{ Accept: 'text/event-stream' },
 		)
 
 		if (!response.body) {
@@ -544,26 +473,6 @@ export class OpenRouterClient {
 	}
 
 	/**
-	 * Build the transport headers for an OpenRouter request. All three call
-	 * sites (`complete`, `completeStream`, `embed`) route through this so any
-	 * future header (e.g. `OpenRouter-Organization`) lands in exactly one
-	 * place.
-	 *
-	 * @param extra Optional additional headers merged on top of the base set.
-	 *   Used by `completeStream` to add `Accept: text/event-stream`.
-	 */
-	private buildHeaders(extra?: Record<string, string>): Record<string, string> {
-		const headers: Record<string, string> = {
-			Authorization: `Bearer ${this.apiKey}`,
-			'Content-Type': 'application/json',
-			...extra,
-		}
-		if (this.referer) headers['HTTP-Referer'] = this.referer
-		if (this.title) headers['X-OpenRouter-Title'] = this.title
-		return headers
-	}
-
-	/**
 	 * POSTs a non-streaming chat completion to `${BASE_URL}/chat/completions`
 	 * and returns the parsed {@link CompletionsResponse}. The request is
 	 * sent with `stream: false`. For token-by-token SSE streaming use
@@ -603,13 +512,6 @@ export class OpenRouterClient {
 			signalOrOptions instanceof AbortSignal
 				? { signal: signalOrOptions }
 				: (signalOrOptions ?? {})
-		const signal = opts.signal
-		const config = opts.retryConfig
-			? resolveRetryConfig({ ...this.retry, ...opts.retryConfig })
-			: this.retry
-		const budget = opts.retryBudget ?? createRetryBudget(config)
-
-		const headers = this.buildHeaders()
 
 		/**
 		 * Precedence: DEFAULT_MODEL fallback < client.defaults < per-request fields.
@@ -622,35 +524,11 @@ export class OpenRouterClient {
 			stream: false as const,
 		}
 
-		const response = await withRetry(
-			async () => {
-				const res = await fetch(`${BASE_URL}/chat/completions`, {
-					method: 'POST',
-					headers,
-					body: JSON.stringify(body),
-					signal,
-				})
-
-				if (!res.ok) {
-					const errBody = await this.safeParseJson(res)
-					// eslint-disable-next-line no-console
-					console.error('[openrouter] error response:', res.status, JSON.stringify(errBody))
-					const message =
-						(errBody as { error?: { message?: string } } | undefined)?.error?.message ??
-						`HTTP ${res.status}`
-					const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)?.error?.metadata
-					throw new OpenRouterError({
-						code: res.status,
-						message,
-						body: errBody,
-						metadata,
-						retryAfterMs: parseRetryAfter(res.headers.get('Retry-After')),
-					})
-				}
-
-				return res
-			},
-			{ budget, config, signal },
+		const response = await this.transport.fetchWithRetry(
+			'/chat/completions',
+			{ method: 'POST', body: JSON.stringify(body) },
+			opts,
+			'[openrouter]',
 		)
 
 		const json = (await response.json()) as CompletionsResponse
@@ -720,13 +598,7 @@ export class OpenRouterClient {
 			signalOrOptions instanceof AbortSignal
 				? { signal: signalOrOptions }
 				: (signalOrOptions ?? {})
-		const signal = opts.signal
-		const config = opts.retryConfig
-			? resolveRetryConfig({ ...this.retry, ...opts.retryConfig })
-			: this.retry
-		const budget = opts.retryBudget ?? createRetryBudget(config)
 
-		const headers = this.buildHeaders()
 		const body: Record<string, unknown> = {
 			model,
 			input: request.input,
@@ -736,35 +608,11 @@ export class OpenRouterClient {
 		if (request.input_type) body.input_type = request.input_type
 		if (request.user) body.user = request.user
 
-		const response = await withRetry(
-			async () => {
-				const res = await fetch(`${BASE_URL}/embeddings`, {
-					method: 'POST',
-					headers,
-					body: JSON.stringify(body),
-					signal,
-				})
-
-				if (!res.ok) {
-					const errBody = await this.safeParseJson(res)
-					// eslint-disable-next-line no-console
-					console.error('[openrouter:embed] error response:', res.status, JSON.stringify(errBody))
-					const message =
-						(errBody as { error?: { message?: string } } | undefined)?.error?.message ??
-						`HTTP ${res.status}`
-					const metadata = (errBody as { error?: { metadata?: Record<string, unknown> } } | undefined)?.error?.metadata
-					throw new OpenRouterError({
-						code: res.status,
-						message,
-						body: errBody,
-						metadata,
-						retryAfterMs: parseRetryAfter(res.headers.get('Retry-After')),
-					})
-				}
-
-				return res
-			},
-			{ budget, config, signal },
+		const response = await this.transport.fetchWithRetry(
+			'/embeddings',
+			{ method: 'POST', body: JSON.stringify(body) },
+			opts,
+			'[openrouter:embed]',
 		)
 
 		const json = (await response.json()) as EmbedResponse
@@ -786,22 +634,6 @@ export class OpenRouterClient {
 		return json
 	}
 
-	/**
-	 * Best-effort JSON parse of an HTTP response body. Returns `undefined`
-	 * on any parse error so callers can surface the raw status without
-	 * throwing a secondary error.
-	 *
-	 * @param response The `Response` to consume. The body is consumed even
-	 *   on failure (subsequent reads will throw).
-	 * @returns The parsed JSON, or `undefined` if the body was not JSON.
-	 */
-	private async safeParseJson(response: Response): Promise<unknown> {
-		try {
-			return await response.json()
-		} catch {
-			return undefined
-		}
-	}
 }
 
 /**
