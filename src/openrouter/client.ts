@@ -130,11 +130,25 @@ export interface OpenRouterClientOptions extends LLMConfig {
 	/**
 	 * Optional human-readable site/app name. Sent as the
 	 * `X-OpenRouter-Title` header for OpenRouter rankings/attribution.
+	 *
+	 * **Only takes effect when `referer` is also set.** Per OpenRouter's
+	 * app-attribution rules, a title sent without an `HTTP-Referer` is
+	 * silently ignored — no app page is created and the title will not
+	 * appear in OpenRouter logs or rankings. When `referer` is a
+	 * `localhost` URL, `title` is additionally required for the app to
+	 * be tracked.
+	 *
+	 * @see https://openrouter.ai/docs/app-attribution
 	 */
 	title?: string
 	/**
-	 * Optional referer URL. Sent as the `HTTP-Referer` header for OpenRouter
-	 * rankings/attribution.
+	 * Optional referer URL. Sent as the `HTTP-Referer` header for
+	 * OpenRouter rankings/attribution. Must be a URL (e.g.
+	 * `https://myapp.com`) — OpenRouter uses it as the unique identifier
+	 * for your app. Without this header, attribution does not happen and
+	 * `title` is ignored.
+	 *
+	 * @see https://openrouter.ai/docs/app-attribution
 	 */
 	referer?: string
 	/**
@@ -366,6 +380,11 @@ export class OpenRouterClient {
 		const key = apiKey ?? envKey
 		if (!key) {
 			throw new Error('OPENROUTER_API_KEY is not set. Pass apiKey to the OpenRouterClient or set the env var.')
+		}
+		if (title && !referer) {
+			console.warn(
+				'[OpenRouterClient] `title` was provided without `referer`. OpenRouter ignores `X-OpenRouter-Title` unless `HTTP-Referer` is also set, so the title will not appear in OpenRouter logs or rankings. See https://openrouter.ai/docs/app-attribution',
+			)
 		}
 		this.apiKey = key
 		this.title = title
