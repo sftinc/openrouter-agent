@@ -327,6 +327,25 @@ export interface EmbedResponse {
 const BASE_URL = 'https://openrouter.ai/api/v1'
 
 /**
+ * Returns `true` if `value` parses as a URL whose host is a loopback name
+ * (`localhost`) or a loopback IP literal (`127.0.0.0/8`, `::1`). OpenRouter
+ * treats such referers as a special case: app-tracking only kicks in when
+ * `X-OpenRouter-Title` is also sent.
+ *
+ * Falls back to `false` for unparseable strings — those are not blocked,
+ * they just don't trigger the localhost-specific warning.
+ */
+function isLocalhostUrl(value: string): boolean {
+	try {
+		const { hostname } = new URL(value)
+		if (hostname === 'localhost' || hostname === '::1') return true
+		return /^127(?:\.\d{1,3}){3}$/.test(hostname)
+	} catch {
+		return false
+	}
+}
+
+/**
  * Thin HTTP client for OpenRouter's `/chat/completions` endpoint. Holds the
  * API key (from env or constructor), optional `referer`/`title` headers for
  * OpenRouter attribution, and default {@link LLMConfig} values applied to
@@ -384,6 +403,11 @@ export class OpenRouterClient {
 		if (title && !referer) {
 			console.warn(
 				'[OpenRouterClient] `title` was provided without `referer`. OpenRouter ignores `X-OpenRouter-Title` unless `HTTP-Referer` is also set, so the title will not appear in OpenRouter logs or rankings. See https://openrouter.ai/docs/app-attribution',
+			)
+		}
+		if (referer && !title && isLocalhostUrl(referer)) {
+			console.warn(
+				`[OpenRouterClient] \`referer\` is a localhost URL (${referer}) but \`title\` was not provided. OpenRouter requires \`X-OpenRouter-Title\` alongside a localhost \`HTTP-Referer\` for the app to be tracked. See https://openrouter.ai/docs/app-attribution`,
 			)
 		}
 		this.apiKey = key
