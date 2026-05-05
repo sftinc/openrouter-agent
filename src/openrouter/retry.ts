@@ -8,7 +8,7 @@
  * for cooperative full-jitter exponential backoff with per-turn budget sharing.
  */
 
-import { OpenRouterError } from './client.js'
+import { OpenRouterError } from './errors.js'
 import { StreamTruncatedError, IdleTimeoutError } from './errors.js'
 
 /**

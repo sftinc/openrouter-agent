@@ -6,10 +6,9 @@
  *   - {@link OpenRouterClient.complete} for non-streaming JSON responses.
  *   - {@link OpenRouterClient.completeStream} for SSE token-by-token streaming.
  *
- * Also defines {@link OpenRouterError}, the typed error thrown on any non-2xx
- * response, and the internal `assembleCompletionsResponse` helper used solely
- * to render a streaming run as a single response object for `OPENROUTER_DEBUG`
- * logging.
+ * Re-exports {@link OpenRouterError} (defined in `errors.ts`) and the internal
+ * `assembleCompletionsResponse` helper used solely to render a streaming run as
+ * a single response object for `OPENROUTER_DEBUG` logging.
  *
  * The client is thin on purpose: it does not retry, queue, or rate-limit.
  * Higher-level concerns (the agent loop, tool execution, message
@@ -24,7 +23,7 @@ import type {
 } from './types.js'
 import { DEFAULT_MODEL } from './types.js'
 import { parseSseStream } from './sse.js'
-import { StreamTruncatedError } from './errors.js'
+import { StreamTruncatedError, OpenRouterError } from './errors.js'
 import {
 	parseRetryAfter,
 	withRetry,
@@ -34,71 +33,7 @@ import {
 	type RetryBudget,
 } from './retry.js'
 
-/**
- * Error thrown by {@link OpenRouterClient} when OpenRouter returns a non-2xx
- * response. The HTTP status is on {@link OpenRouterError.code}; the parsed
- * response body (if any) is on {@link OpenRouterError.body}; provider-specific
- * extras (rate-limit windows, moderation reasons, …) on
- * {@link OpenRouterError.metadata}.
- *
- * Common codes:
- *   - `401` — missing or invalid API key.
- *   - `402` — out of credits.
- *   - `429` — rate limited (check `metadata` for retry hints).
- *   - `503` — upstream provider unavailable.
- *
- * @example
- * ```ts
- * import { OpenRouterClient, OpenRouterError } from "./openrouter";
- *
- * try {
- *   await client.complete({ messages });
- * } catch (err) {
- *   if (err instanceof OpenRouterError) {
- *     if (err.code === 429) console.warn("rate limited", err.metadata);
- *     else throw err;
- *   }
- * }
- * ```
- */
-export class OpenRouterError extends Error {
-	/** HTTP status code that triggered the error. */
-	readonly code: number
-	/** Parsed JSON body of the error response, or `undefined` if the body was not JSON. */
-	readonly body?: unknown
-	/** Provider-specific extra detail extracted from `body.error.metadata`. */
-	readonly metadata?: Record<string, unknown>
-	/**
-	 * Milliseconds to wait before retrying, parsed from the `Retry-After`
-	 * response header. Used by the retry helper as a lower bound on the next
-	 * backoff delay (re-capped at the configured `maxDelayMs`). `undefined`
-	 * when the header was absent or unparseable.
-	 */
-	readonly retryAfterMs?: number
-
-	/**
-	 * @param params Constructor params.
-	 * @param params.code HTTP status code.
-	 * @param params.message Human-readable message (becomes `Error.message`).
-	 * @param params.body Optional parsed response body.
-	 * @param params.metadata Optional provider metadata.
-	 * @param params.retryAfterMs Optional parsed `Retry-After` header in milliseconds.
-	 */
-	constructor(params: {
-		code: number
-		message: string
-		body?: unknown
-		metadata?: Record<string, unknown>
-		retryAfterMs?: number
-	}) {
-		super(params.message)
-		this.name = 'OpenRouterError'
-		this.code = params.code
-		this.body = params.body
-		this.metadata = params.metadata
-		this.retryAfterMs = params.retryAfterMs
-	}
-}
+export { OpenRouterError } from './errors.js'
 
 /**
  * Options for {@link OpenRouterClient}. Project-wide LLM defaults (model,

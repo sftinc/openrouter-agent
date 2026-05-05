@@ -80,3 +80,69 @@ export class IdleTimeoutError extends Error {
 		this.idleMs = params.idleMs;
 	}
 }
+
+/**
+ * Error thrown by {@link OpenRouterClient} when OpenRouter returns a non-2xx
+ * response. The HTTP status is on {@link OpenRouterError.code}; the parsed
+ * response body (if any) is on {@link OpenRouterError.body}; provider-specific
+ * extras (rate-limit windows, moderation reasons, …) on
+ * {@link OpenRouterError.metadata}.
+ *
+ * Common codes:
+ *   - `401` — missing or invalid API key.
+ *   - `402` — out of credits.
+ *   - `429` — rate limited (check `metadata` for retry hints).
+ *   - `503` — upstream provider unavailable.
+ *
+ * @example
+ * ```ts
+ * import { OpenRouterClient, OpenRouterError } from "./openrouter";
+ *
+ * try {
+ *   await client.complete({ messages });
+ * } catch (err) {
+ *   if (err instanceof OpenRouterError) {
+ *     if (err.code === 429) console.warn("rate limited", err.metadata);
+ *     else throw err;
+ *   }
+ * }
+ * ```
+ */
+export class OpenRouterError extends Error {
+	/** HTTP status code that triggered the error. */
+	readonly code: number;
+	/** Parsed JSON body of the error response, or `undefined` if the body was not JSON. */
+	readonly body?: unknown;
+	/** Provider-specific extra detail extracted from `body.error.metadata`. */
+	readonly metadata?: Record<string, unknown>;
+	/**
+	 * Milliseconds to wait before retrying, parsed from the `Retry-After`
+	 * response header. Used by the retry helper as a lower bound on the next
+	 * backoff delay (re-capped at the configured `maxDelayMs`). `undefined`
+	 * when the header was absent or unparseable.
+	 */
+	readonly retryAfterMs?: number;
+
+	/**
+	 * @param params Constructor params.
+	 * @param params.code HTTP status code.
+	 * @param params.message Human-readable message (becomes `Error.message`).
+	 * @param params.body Optional parsed response body.
+	 * @param params.metadata Optional provider metadata.
+	 * @param params.retryAfterMs Optional parsed `Retry-After` header in milliseconds.
+	 */
+	constructor(params: {
+		code: number;
+		message: string;
+		body?: unknown;
+		metadata?: Record<string, unknown>;
+		retryAfterMs?: number;
+	}) {
+		super(params.message);
+		this.name = "OpenRouterError";
+		this.code = params.code;
+		this.body = params.body;
+		this.metadata = params.metadata;
+		this.retryAfterMs = params.retryAfterMs;
+	}
+}
