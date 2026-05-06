@@ -16,10 +16,12 @@ import { z } from 'zod'
 import { setOpenRouterClient, Tool, Agent } from '@sftinc/openrouter-agent'
 
 setOpenRouterClient({
-	max_tokens: 1000,
-	temperature: 0.3,
-	reasoning: { effort: 'none' },
 	title: 'openrouter-agent: quickstart',
+	chat: {
+		max_tokens: 1000,
+		temperature: 0.3,
+		reasoning: { effort: 'none' },
+	},
 })
 
 const calculator = new Tool<{ expression: string }>({

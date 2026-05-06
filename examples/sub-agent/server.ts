@@ -17,10 +17,12 @@
 import { setOpenRouterClient, Agent } from '@sftinc/openrouter-agent'
 
 setOpenRouterClient({
-	max_tokens: 1000,
-	temperature: 0.3,
-	reasoning: { effort: 'none' },
 	title: 'openrouter-agent: sub-agent',
+	chat: {
+		max_tokens: 1000,
+		temperature: 0.3,
+		reasoning: { effort: 'none' },
+	},
 })
 
 // A subagent is just an Agent passed into another Agent's `tools` array.

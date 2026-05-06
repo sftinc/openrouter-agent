@@ -28,10 +28,12 @@ import { setOpenRouterClient, Tool, Agent, InMemorySessionStore } from '@sftinc/
  * The API key is read from `process.env.OPENROUTER_API_KEY`.
  */
 setOpenRouterClient({
-	max_tokens: 1000,
-	temperature: 0.3,
-	reasoning: { effort: 'low' },
 	title: 'openrouter-agent: chat-stream-events',
+	chat: {
+		max_tokens: 1000,
+		temperature: 0.3,
+		reasoning: { effort: 'low' },
+	},
 })
 
 /**

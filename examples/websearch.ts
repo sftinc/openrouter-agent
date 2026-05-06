@@ -19,13 +19,15 @@ import { OpenRouterClient } from '@sftinc/openrouter-agent'
 const query = process.argv[2] ?? 'Current stock price for MSFT'
 
 const client = new OpenRouterClient({
-	model: 'anthropic/claude-haiku-4.5',
-	max_tokens: 2000,
-	temperature: 0.3,
 	title: 'openrouter-agent websearch example',
+	chat: {
+		model: 'anthropic/claude-haiku-4.5',
+		max_tokens: 2000,
+		temperature: 0.3,
+	},
 })
 
-const response = await client.complete({
+const response = await client.chat.complete({
 	messages: [
 		{
 			role: 'system',
