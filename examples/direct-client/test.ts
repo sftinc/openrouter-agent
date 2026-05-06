@@ -22,7 +22,7 @@ if (!apiKey) {
 const query = process.argv[2] ?? 'Current stock price for MSFT'
 
 const body = {
-	model: 'openai/gpt-5.4-mini',
+	model: 'anthropic/claude-haiku-4.5',
 	max_tokens: 2000,
 	temperature: 0.3,
 	stream: false,
@@ -51,4 +51,13 @@ const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
 console.log('--- HTTP status ---')
 console.log(response.status, response.statusText)
 console.log('--- response body ---')
-console.dir(await response.json(), { depth: null })
+const data = (await response.json()) as { choices?: { message?: { annotations?: { type: string }[] } }[] }
+for (const choice of data.choices ?? []) {
+	const annotations = choice.message?.annotations
+	if (Array.isArray(annotations) && choice.message) {
+		const filtered = annotations.filter((a) => a.type !== 'url_citation')
+		if (filtered.length > 0) choice.message.annotations = filtered
+		else delete choice.message.annotations
+	}
+}
+console.dir(data, { depth: null })
