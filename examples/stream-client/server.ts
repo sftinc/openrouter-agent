@@ -1,11 +1,11 @@
 /**
- * Direct client — a one-shot `OpenRouterClient.chat.complete` call (no
- * `Agent` loop). Demonstrates the raw client surface with a plain text
- * generation request (no tools).
+ * Stream client — a one-shot `OpenRouterClient.chat.completeStream` call
+ * (no `Agent` loop). Demonstrates the raw streaming client surface,
+ * printing content deltas to stdout as they arrive.
  *
  * From this repo:
- *   npm run demo:direct-client                          # default prompt
- *   npm run demo:direct-client -- "your prompt here"    # custom prompt
+ *   npm run demo:stream-client                          # default prompt
+ *   npm run demo:stream-client -- "your prompt here"    # custom prompt
  *
  * From a project that has installed `@sftinc/openrouter-agent`:
  *   1. Copy this file into your project.
@@ -21,16 +21,19 @@ const prompt = process.argv[2] ?? 'Write 3 paragraphs about a boy and his dog.'
 
 const client = new OpenRouterClient({
 	referer: 'https://github.com/sftinc/openrouter-agent',
-	title: 'openrouter-agent direct-client example',
+	title: 'openrouter-agent stream-client example',
 	chat: {
 		max_tokens: 2000,
 		temperature: 0.3,
 	},
 })
 
-const response = await client.chat.complete({
+console.log('--- response ---')
+let model: string | undefined
+for await (const chunk of client.chat.completeStream({
 	messages: [{ role: 'user', content: prompt }],
-})
-
-console.log('\n--- response ---')
-console.dir(response, { depth: null })
+})) {
+	model ??= chunk.model
+	process.stdout.write(chunk.choices[0]?.delta?.content ?? '')
+}
+console.log(`\n\n--- model: ${model} ---\n`)

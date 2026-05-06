@@ -36,6 +36,7 @@
 		"demo:quickstart": "tsx --env-file=.env examples/quickstart/server.ts",
 		"demo:sub-agent": "tsx --env-file=.env examples/sub-agent/server.ts",
 		"demo:direct-client": "tsx --env-file=.env examples/direct-client/server.ts",
+		"demo:stream-client": "tsx --env-file=.env examples/stream-client/server.ts",
 		"demo:full-demo": "tsx --watch --env-file=.env examples/full-demo/server.ts",
 		"release": "commit-and-tag-version",
 		"release:minor": "commit-and-tag-version --release-as minor",
