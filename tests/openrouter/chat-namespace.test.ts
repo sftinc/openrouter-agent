@@ -125,6 +125,25 @@ describe("ChatNamespace.complete (drainer)", () => {
     expect(message.annotations?.[1]?.url_citation.url).toBe("https://b.example");
   });
 
+  test("preserves provider, system_fingerprint, top-level error, and per-choice error from chunks", async () => {
+    const chunks: CompletionChunk[] = [
+      { id: "g1", object: "chat.completion.chunk", created: 1, model: "x", provider: "OpenAI", system_fingerprint: "fp_42", choices: [{ index: 0, delta: { role: "assistant", content: "hi" }, finish_reason: null, native_finish_reason: null }] } as any,
+      { id: "g1", object: "chat.completion.chunk", created: 1, model: "x", choices: [], error: { code: 500, message: "Server tool request failed", metadata: { error_type: "server" } } } as any,
+      { id: "g1", object: "chat.completion.chunk", created: 1, model: "x", choices: [{ index: 0, delta: {}, finish_reason: "error", native_finish_reason: "error", error: { code: 502, message: "upstream gone" } }] } as any,
+    ];
+    (globalThis.fetch as any).mockResolvedValueOnce(new Response(sseStream(chunks), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+
+    const transport = new Transport({ apiKey: "sk-test" });
+    const chat = new ChatNamespace(transport);
+    const res = await chat.complete({ messages: [{ role: "user", content: "hi" }] });
+
+    expect(res.provider).toBe("OpenAI");
+    expect(res.system_fingerprint).toBe("fp_42");
+    expect(res.error?.code).toBe(500);
+    expect(res.error?.message).toBe("Server tool request failed");
+    expect(res.choices[0]!.error?.code).toBe(502);
+  });
+
   test("complete forces stream:true on the wire", async () => {
     const chunks: CompletionChunk[] = [
       { id: "g1", object: "chat.completion.chunk", created: 1, model: "x", choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: "stop", native_finish_reason: "stop" }] } as any,

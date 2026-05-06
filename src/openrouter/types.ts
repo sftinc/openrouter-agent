@@ -346,6 +346,19 @@ export interface CompletionsResponse {
 	system_fingerprint?: string
 	/** Token usage and (optionally) cost — populated when the provider reports it. */
 	usage?: Usage
+	/**
+	 * Upstream provider that served the response (e.g. `"OpenAI"`,
+	 * `"Anthropic"`). Surfaced verbatim by OpenRouter on streaming chunks
+	 * and preserved here when assembled by {@link OpenRouterClient.complete}.
+	 */
+	provider?: string
+	/**
+	 * Top-level error reported during the response (e.g. server-tool failure
+	 * mid-stream). Distinct from per-choice {@link NonStreamingChoice.error}
+	 * — this surfaces errors that aren't tied to a specific choice. Latest
+	 * error wins when multiple chunks report one.
+	 */
+	error?: ErrorResponse
 }
 
 /**
@@ -443,5 +456,15 @@ export interface CompletionChunk {
 	choices: StreamingChoice[]
 	/** Token usage. Typically present only on the final chunk. */
 	usage?: Usage
+	/** Upstream provider that served the chunk (e.g. `"OpenAI"`, `"Anthropic"`). */
+	provider?: string
+	/** Provider fingerprint (OpenAI-style). Absent on most non-OpenAI models. */
+	system_fingerprint?: string
+	/**
+	 * Top-level error reported on this chunk (e.g. server-tool failure
+	 * mid-stream). Distinct from {@link StreamingChoice.error} — this
+	 * variant arrives on chunks that have an empty `choices` array.
+	 */
+	error?: ErrorResponse
 }
 

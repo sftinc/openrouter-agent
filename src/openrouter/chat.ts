@@ -23,6 +23,7 @@ import type {
 	CompletionChunk,
 	CompletionsRequest,
 	CompletionsResponse,
+	ErrorResponse,
 	LLMConfig,
 } from "./types.js";
 
@@ -201,18 +202,25 @@ function assembleCompletionsResponse(chunks: CompletionChunk[]): CompletionsResp
 		annotations: Annotation[];
 		finish_reason: string | null;
 		native_finish_reason: string | null;
+		error?: ErrorResponse;
 	};
 	const choices = new Map<number, ChoiceAcc>();
 	let id = "";
 	let model = "";
 	let created = 0;
 	let usage: CompletionsResponse["usage"];
+	let provider: string | undefined;
+	let systemFingerprint: string | undefined;
+	let topLevelError: ErrorResponse | undefined;
 
 	for (const chunk of chunks) {
 		if (!id && chunk.id) id = chunk.id;
 		if (!model && chunk.model) model = chunk.model;
 		if (!created && chunk.created) created = chunk.created;
 		if (chunk.usage) usage = chunk.usage;
+		if (chunk.provider) provider = chunk.provider;
+		if (chunk.system_fingerprint) systemFingerprint = chunk.system_fingerprint;
+		if (chunk.error) topLevelError = chunk.error;
 		const cs = chunk.choices ?? [];
 		for (let i = 0; i < cs.length; i++) {
 			const sc = cs[i]!;
@@ -241,6 +249,7 @@ function assembleCompletionsResponse(chunks: CompletionChunk[]): CompletionsResp
 			if (sc.finish_reason !== null && sc.finish_reason !== undefined) acc.finish_reason = sc.finish_reason;
 			if (sc.native_finish_reason !== null && sc.native_finish_reason !== undefined)
 				acc.native_finish_reason = sc.native_finish_reason;
+			if (sc.error) acc.error = sc.error;
 		}
 	}
 
@@ -268,8 +277,12 @@ function assembleCompletionsResponse(chunks: CompletionChunk[]): CompletionsResp
 					...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
 					...(acc.annotations.length > 0 ? { annotations: acc.annotations } : {}),
 				},
+				...(acc.error ? { error: acc.error } : {}),
 			};
 		}),
 		...(usage ? { usage } : {}),
+		...(provider ? { provider } : {}),
+		...(systemFingerprint ? { system_fingerprint: systemFingerprint } : {}),
+		...(topLevelError ? { error: topLevelError } : {}),
 	};
 }
