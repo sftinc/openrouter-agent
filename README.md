@@ -47,10 +47,13 @@ import { z } from "zod";
 import { setOpenRouterClient, Tool, Agent } from "@sftinc/openrouter-agent";
 
 setOpenRouterClient({
-  model: "anthropic/claude-haiku-4.5",
-  max_tokens: 2000,
-  temperature: 0.3,
+  referer: "https://github.com/sftinc/openrouter-agent",
   title: "my-app",
+  chat: {
+    model: "anthropic/claude-haiku-4.5",
+    max_tokens: 2000,
+    temperature: 0.3,
+  },
 });
 
 const calculator = new Tool({
@@ -247,7 +250,7 @@ The full API reference lives in [`docs/api/`](./docs/api/index.md). Every public
 | --- | --- |
 | [Agent Layer](./docs/api/agent.md) | `Agent`, `AgentConfig`, `AgentRunOptions`, `AgentRun`, every `AgentEvent` variant, loop semantics |
 | [Tool Layer](./docs/api/tool.md) | `Tool`, `ToolConfig`, `ToolDeps`, `ToolResult`, `ToolDisplayHooks`, result coercion, validation |
-| [OpenRouter Client](./docs/api/openrouter.md) | `OpenRouterClient`, `setOpenRouterClient`, `OpenRouterError`, `DEFAULT_MODEL`, `LLMConfig`, request/response types |
+| [OpenRouter Client](./docs/api/openrouter.md) | `OpenRouterClient` (`chat.complete`, `chat.completeStream`, `embeddings.create`, `audio.transcriptions.create`), `setOpenRouterClient`, `OpenRouterError`, `LLMConfig`, request/response types |
 | [Session Layer](./docs/api/session.md) | `SessionStore`, `InMemorySessionStore`, `SessionBusyError`, custom-store sketches |
 | [Conversation Types](./docs/api/types.md) | `Message`, `ContentPart`, `ToolCall`, `Usage`, `Result`, all `stopReason` values |
 | [Event Helpers](./docs/api/helpers.md) | Display, consumption, NDJSON codec, Node/Web HTTP adapters and handlers |
@@ -256,22 +259,34 @@ Start at [`docs/api/index.md`](./docs/api/index.md) for the navigation index and
 
 ## Examples
 
-Two runnable examples ship in `examples/`:
+Runnable examples ship in `examples/`:
 
-- `examples/websearch.ts` — single-shot `OpenRouterClient.complete` call with the `openrouter:web_search` server tool.
+- `examples/quickstart/` — minimal Agent with one custom Tool (a calculator).
 
   ```bash
-  npm run websearch -- "Latest GDP figures for Brazil"
+  npm run demo:quickstart
   ```
 
-- `examples/demo/` — Node HTTP server that streams `AgentEvent` NDJSON to a browser chat client. Useful as a reference integration for `handleAgentRun`.
+- `examples/sub-agent/` — an Agent passed into another Agent's `tools` array; the parent invokes the child like any tool.
 
   ```bash
-  npm run demo
+  npm run demo:sub-agent
+  ```
+
+- `examples/direct-client/` — single-shot `OpenRouterClient.chat.complete` call (no `Agent` loop). Demonstrates the raw client surface using OpenRouter's `openrouter:web_search` server tool.
+
+  ```bash
+  npm run demo:direct-client -- "Latest GDP figures for Brazil"
+  ```
+
+- `examples/full-demo/` — Node HTTP server that streams `AgentEvent` NDJSON to a browser chat client. Useful as a reference integration for `handleAgentRun`.
+
+  ```bash
+  npm run demo:full-demo
   # → http://localhost:3000
   ```
 
-Both examples expect `OPENROUTER_API_KEY` in a local `.env` file (loaded via `--env-file` in the `npm` scripts).
+All examples expect `OPENROUTER_API_KEY` in a local `.env` file (loaded via `--env-file` in the `npm` scripts).
 
 ## Development
 

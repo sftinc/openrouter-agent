@@ -44,4 +44,4 @@ If you are new to the package, read in this order:
 
 - [Root README](../../README.md) — install, quickstart, architecture overview, environment variables.
 - [`docs/openrouter/`](../openrouter/) — upstream OpenRouter API reference (treated as the source of truth for wire shapes).
-- [`examples/`](../../examples/) — runnable scripts (`websearch.ts`) and a streaming HTTP demo (`demo/`).
+- [`examples/`](../../examples/) — runnable scripts: `quickstart/`, `sub-agent/`, `direct-client/` (a one-shot `chat.complete` call), and `full-demo/` (streaming HTTP demo).

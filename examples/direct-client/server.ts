@@ -1,15 +1,17 @@
 /**
- * Websearch — direct OpenRouterClient call using OpenRouter's built-in
- * `openrouter:web_search` tool (Exa engine).
+ * Direct client — a one-shot `OpenRouterClient.chat.complete` call (no
+ * `Agent` loop). This example happens to use OpenRouter's built-in
+ * `openrouter:web_search` server tool (Exa engine), but the point is the
+ * raw client surface itself.
  *
  * From this repo:
- *   npm run websearch                          # default query
- *   npm run websearch -- "your query here"     # custom query
+ *   npm run demo:direct-client                          # default query
+ *   npm run demo:direct-client -- "your query here"     # custom query
  *
  * From a project that has installed `@sftinc/openrouter-agent`:
  *   1. Copy this file into your project.
  *   2. Install the runner: `npm i -D tsx`
- *   3. Run: `OPENROUTER_API_KEY=sk-... npx tsx websearch.ts "your query"`
+ *   3. Run: `OPENROUTER_API_KEY=sk-... npx tsx server.ts "your query"`
  *
  * Env vars:
  *   OPENROUTER_API_KEY (required) — OpenRouter API key.
