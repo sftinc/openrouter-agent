@@ -16,6 +16,7 @@ import { z } from 'zod'
 import { setOpenRouterClient, Tool, Agent } from '@sftinc/openrouter-agent'
 
 setOpenRouterClient({
+	referer: 'https://github.com/sftinc/openrouter-agent',
 	title: 'openrouter-agent: quickstart',
 	chat: {
 		max_tokens: 1000,

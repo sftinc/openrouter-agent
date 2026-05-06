@@ -17,6 +17,7 @@
 import { setOpenRouterClient, Agent } from '@sftinc/openrouter-agent'
 
 setOpenRouterClient({
+	referer: 'https://github.com/sftinc/openrouter-agent',
 	title: 'openrouter-agent: sub-agent',
 	chat: {
 		max_tokens: 1000,

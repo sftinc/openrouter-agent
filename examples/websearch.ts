@@ -19,6 +19,7 @@ import { OpenRouterClient } from '@sftinc/openrouter-agent'
 const query = process.argv[2] ?? 'Current stock price for MSFT'
 
 const client = new OpenRouterClient({
+	referer: 'https://github.com/sftinc/openrouter-agent',
 	title: 'openrouter-agent websearch example',
 	chat: {
 		model: 'anthropic/claude-haiku-4.5',
