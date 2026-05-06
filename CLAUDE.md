@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Node.js + TypeScript. An agent wrapper around OpenRouter. API reference lives in `docs/openrouter/` — treat it as the source of truth when writing integration code.
+Node.js + TypeScript. An agent wrapper around OpenRouter. Local OpenRouter API reference (kept for working context, not shipped) lives in `docs/openrouter/` — treat it as the source of truth when writing integration code. The user-facing API reference lives in `docs/api/` — keep it in sync with the SDK surface when changing exports, signatures, or behavior, and do not link to `docs/openrouter/` from there.
 
 ## Commands
 

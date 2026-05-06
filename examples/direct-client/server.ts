@@ -21,7 +21,7 @@ const prompt = process.argv[2] ?? 'Write 3 paragraphs about a boy and his dog.'
 
 const client = new OpenRouterClient({
 	referer: 'https://github.com/sftinc/openrouter-agent',
-	title: 'openrouter-agent direct-client example',
+	title: 'openrouter-agent: direct-client',
 	chat: {
 		max_tokens: 2000,
 		temperature: 0.3,

@@ -1,10 +1,11 @@
 /**
  * @file Type definitions for the OpenRouter chat completions API surface.
  *
- * Mirrors OpenRouter's HTTP request/response schemas (see
- * `docs/openrouter/llm.md`) so callers can construct typed requests and
- * consume both streaming (`CompletionChunk`) and non-streaming
- * (`CompletionsResponse`) responses with full type safety.
+ * Mirrors OpenRouter's HTTP request/response schemas — see
+ * https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request
+ * — so callers can construct typed requests and consume both streaming
+ * (`CompletionChunk`) and non-streaming (`CompletionsResponse`) responses
+ * with full type safety.
  *
  * The {@link LLMConfig} interface in particular is the canonical "knobs"
  * shape — the `Agent` and `OpenRouterClient` both treat it as their unit
@@ -19,7 +20,8 @@ import type { Message, ToolCall, Usage } from '../types/index.js'
  * User-facing configuration mirroring OpenRouter's chat completions
  * request schema, minus `messages` and `tools` (handled by the loop
  * and the Agent respectively). Every field is optional. See
- * docs/openrouter/llm.md for the full schema.
+ * https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request
+ * for the full upstream schema.
  *
  * Used in three places, with later layers overriding earlier ones:
  *   1. as defaults on {@link OpenRouterClient} (set once at app startup);
@@ -103,7 +105,7 @@ export interface LLMConfig {
 	/**
 	 * Force a structured response. `json_object` is loose (free-form JSON);
 	 * `json_schema` validates against a JSON Schema with optional `strict`
-	 * mode. See docs/openrouter/llm.md §Structured Outputs.
+	 * mode. See OpenRouter's structured-outputs documentation.
 	 */
 	response_format?:
 		| { type: 'json_object' }
@@ -146,8 +148,8 @@ export interface LLMConfig {
 	user?: string
 	/**
 	 * Fallback models tried in order if the primary {@link LLMConfig.model}
-	 * is unavailable. See docs/openrouter/llm.md §Model Routing. Set
-	 * {@link LLMConfig.route} to `"fallback"` to opt in.
+	 * is unavailable. Set {@link LLMConfig.route} to `"fallback"` to opt in.
+	 * See OpenRouter's model-routing documentation for ordering semantics.
 	 */
 	models?: string[]
 	/**
@@ -157,21 +159,21 @@ export interface LLMConfig {
 	route?: 'fallback'
 	/**
 	 * Provider routing constraints. Common keys include `allow_fallbacks`,
-	 * `require_parameters`, `data_collection`, `order`. See
-	 * docs/openrouter/llm.md §Provider Routing. Pass-through `Record<string,
-	 * unknown>` so future provider keys do not require a type bump.
+	 * `require_parameters`, `data_collection`, `order`. Pass-through
+	 * `Record<string, unknown>` so future provider keys do not require a
+	 * type bump. See OpenRouter's provider-routing documentation.
 	 */
 	provider?: Record<string, unknown>
 	/**
 	 * Plugin pipeline. Each entry has a required `id` (e.g. `"web"`,
 	 * `"file-parser"`, `"response-healing"`, `"context-compression"`) plus
-	 * plugin-specific fields. See docs/openrouter/llm.md §Plugins.
+	 * plugin-specific fields. See OpenRouter's plugins documentation.
 	 */
 	plugins?: Array<{ id: string; [key: string]: unknown }>
 	/**
 	 * Optional debug flags. When `echo_upstream_body` is true, OpenRouter
 	 * echoes back the transformed upstream request body in the response for
-	 * inspection. See docs/openrouter/llm.md.
+	 * inspection.
 	 */
 	debug?: { echo_upstream_body?: boolean }
 }
@@ -180,7 +182,7 @@ export interface LLMConfig {
  * Function tool declaration — a client-side tool your agent implements.
  * The model emits a {@link ToolCall} naming this function; your code is
  * responsible for executing it and supplying the result back as a
- * `tool`-role {@link Message}. See docs/openrouter/llm.md §Tool Calls.
+ * `tool`-role {@link Message}. See OpenRouter's tool-calling documentation.
  */
 export interface FunctionTool {
 	/** Discriminator: always the literal string `"function"`. */
@@ -204,8 +206,8 @@ export interface FunctionTool {
 
 /**
  * Server-side datetime tool. OpenRouter supplies the current datetime when
- * invoked; your code does not implement it. See
- * docs/openrouter/tool-datetime.md.
+ * invoked; your code does not implement it. See OpenRouter's docs for the
+ * `openrouter:datetime` server tool.
  */
 export interface DatetimeServerTool {
 	/** Discriminator: literal `"openrouter:datetime"`. */
@@ -216,7 +218,8 @@ export interface DatetimeServerTool {
  * Server-side web search tool. Executes a search on OpenRouter's
  * infrastructure (forwarded to the chosen provider's search backend) and
  * returns results as URL citations attached to the assistant message.
- * See docs/openrouter/tool-web_search.md for the full `parameters` shape.
+ * See OpenRouter's docs for the `openrouter:web_search` server tool for
+ * the full `parameters` shape.
  */
 export interface WebSearchServerTool {
 	/** Discriminator: literal `"openrouter:web_search"`. */
@@ -250,15 +253,13 @@ export interface WebSearchServerTool {
  * Any tool OpenRouter accepts: either a client-side {@link FunctionTool}
  * (you implement `execute`) or an OpenRouter-hosted server tool
  * ({@link DatetimeServerTool}, {@link WebSearchServerTool}).
- * See docs/openrouter/llm.md and docs/openrouter/tool-*.md.
  */
 export type OpenRouterTool = FunctionTool | DatetimeServerTool | WebSearchServerTool
 
 /**
  * URL citation annotation attached to an assistant message. Populated by
  * OpenRouter when a server tool (e.g. {@link WebSearchServerTool}) returns
- * sources, normalized across providers. See
- * docs/openrouter/tool-web_search.md.
+ * sources, normalized across providers.
  */
 export interface UrlCitationAnnotation {
 	/** Discriminator: literal `"url_citation"`. */
@@ -294,7 +295,6 @@ export interface NonStreamingChoice {
 	 * Normalized finish reason across providers (`"stop"`, `"length"`,
 	 * `"tool_calls"`, `"content_filter"`, `"error"`, …). `null` while the
 	 * choice is still in flight (not applicable to non-streaming responses).
-	 * See docs/openrouter/llm.md.
 	 */
 	finish_reason: string | null
 	/** Provider-specific raw finish reason, unmapped. Useful for debugging. */
@@ -408,7 +408,7 @@ export interface ToolCallDelta {
 
 /**
  * Streaming choice shape from OpenRouter — one per choice within a single
- * SSE chunk. See docs/openrouter/llm.md.
+ * SSE chunk.
  */
 export interface StreamingChoice {
 	/**

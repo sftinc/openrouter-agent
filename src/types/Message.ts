@@ -8,9 +8,10 @@
  * `Agent.run()`, and the runtime arrays/aliases used for role and stop-reason
  * validation.
  *
- * The shapes here are intentionally aligned with the OpenAI-compatible request
- * and response schemas documented in `docs/openrouter/llm.md` — treat that
- * document as the source of truth when extending these types.
+ * The shapes here are intentionally aligned with the OpenAI-compatible chat
+ * completions request and response schemas that OpenRouter speaks. See
+ * https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request
+ * for the upstream wire contract.
  *
  * @module types/Message
  */
@@ -20,7 +21,7 @@
  *
  * `Message` is a discriminated union over the `role` field. Each variant
  * mirrors one of the four message kinds accepted by OpenRouter's chat
- * completions endpoint (see `docs/openrouter/llm.md`). The variants are:
+ * completions endpoint. The variants are:
  *
  * - `system` — instructional preamble authored by the application. By
  *   convention these are sourced from `Agent` configuration rather than
@@ -203,7 +204,7 @@ export type ToolCall = {
  *
  * Every LLM call performed during a run contributes to a single `Usage`
  * record; numeric fields are summed across calls. The shape mirrors
- * OpenRouter's `ResponseUsage` (see `docs/openrouter/llm.md` §Usage), with
+ * OpenRouter's `ResponseUsage` field on a chat-completion response, with
  * the additional invariant that the agent reports the union of every field
  * any provider returned during the run.
  *
@@ -257,7 +258,6 @@ export interface Usage {
   };
   /**
    * Cost broken down by upstream pricing component. Provider-dependent.
-   * See docs/openrouter/llm.md §Usage.
    */
   cost_details?: {
     /** Total upstream cost in USD before OpenRouter markup. */

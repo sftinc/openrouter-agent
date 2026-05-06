@@ -29,7 +29,7 @@ import { setOpenRouterClient, Tool, Agent, InMemorySessionStore } from '@sftinc/
  */
 setOpenRouterClient({
 	referer: 'https://github.com/sftinc/openrouter-agent',
-	title: 'openrouter-agent: chat-stream-events',
+	title: 'openrouter-agent: full-demo',
 	chat: {
 		max_tokens: 1000,
 		temperature: 0.3,
@@ -241,9 +241,7 @@ const researcher = new Agent({
 			content: typeof input === 'string' ? input : 'Starting research session',
 		}),
 		success: (result) => {
-			const searches = result.messages.flatMap((m) =>
-				m.role === 'assistant' ? (m.tool_calls ?? []) : [],
-			).length
+			const searches = result.messages.flatMap((m) => (m.role === 'assistant' ? (m.tool_calls ?? []) : [])).length
 			const tokens = result.usage.total_tokens ?? 0
 			return {
 				title: `Research complete — ${searches} search${searches === 1 ? '' : 'es'}`,

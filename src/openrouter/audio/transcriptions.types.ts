@@ -1,6 +1,7 @@
 /**
  * @file Request, response, and defaults types for OpenRouter's
- * `/audio/transcriptions` endpoint. See docs/openrouter/transcriptions.md.
+ * `/audio/transcriptions` endpoint. See
+ * https://openrouter.ai/docs/api/api-reference/transcriptions/create-audio-transcriptions.
  *
  * The actual HTTP client class lives in `./transcriptions.ts`; this file is
  * type-only so that callers and other modules can import the shapes without

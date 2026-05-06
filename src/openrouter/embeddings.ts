@@ -1,5 +1,6 @@
 /**
- * @file Embeddings namespace. Wraps OpenRouter's `/embeddings` endpoint.
+ * @file Embeddings namespace. Wraps OpenRouter's `/embeddings` endpoint. See
+ * https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings.
  *
  * Field-level resolution for `model`, lowest → highest priority:
  *   1. Hardcoded fallback `"openai/text-embedding-3-small"`.

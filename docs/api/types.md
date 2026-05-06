@@ -1,12 +1,12 @@
 # Conversation Types (`src/types/`)
 
-The `src/types/` folder holds the wire-shape primitives that the agent loop exchanges with OpenRouter — the `Message` discriminated union, its supporting `ContentPart` and `ToolCall` shapes, the cumulative `Usage` accounting record — together with `Result`, the value returned from `Agent.run()`. These are the same shapes documented in `docs/openrouter/llm.md`; treat that document as the source of truth for the underlying OpenAI-compatible chat completions schema. Public re-exports flow through `src/types/index.ts` and then through the package entrypoint `src/index.ts` so consumers can import them directly from `@sftinc/openrouter-agent`.
+The `src/types/` folder holds the wire-shape primitives that the agent loop exchanges with OpenRouter — the `Message` discriminated union, its supporting `ContentPart` and `ToolCall` shapes, the cumulative `Usage` accounting record — together with `Result`, the value returned from `Agent.run()`. These mirror the OpenAI-compatible chat completions schema OpenRouter speaks; see [OpenRouter's chat-completion API docs](https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request) for the underlying wire contract. Public re-exports flow through `src/types/index.ts` and then through the package entrypoint `src/index.ts` so consumers can import them directly from `@sftinc/openrouter-agent`.
 
 Source files:
 
 - `src/types/Message.ts` — every type defined here (`src/types/Message.ts:1`).
 - `src/types/index.ts` — folder barrel (`src/types/index.ts:1`).
-- `src/index.ts` — package entrypoint, re-exports `Message`, `ContentPart`, `ToolCall`, `Usage`, `Result` (`src/index.ts:305`).
+- `src/index.ts` — package entrypoint, re-exports `Message`, `ContentPart`, `ToolCall`, `Usage`, `Result`, `UsageLogSource`, `UsageLogEntry`, plus the helper `flattenUsageLog`.
 
 ## Imports
 
@@ -19,10 +19,14 @@ import type {
   ToolCall,
   Usage,
   Result,
+  UsageLogSource,
+  UsageLogEntry,
 } from "@sftinc/openrouter-agent";
+
+import { flattenUsageLog } from "@sftinc/openrouter-agent";
 ```
 
-All five types above are re-exported from the package root at `src/index.ts:305-311`. Two additional helpers — the runtime arrays `MESSAGE_ROLES` / `STOP_REASONS` and their derived literal-union aliases `MessageRole` / `StopReason` — are exported from `src/types/index.ts` (`src/types/index.ts:24-36`) but are **not** currently re-exported from the package entrypoint. They are documented at the bottom of this page for completeness; if you need them externally, import them via a deep path or open an issue requesting public re-export.
+All seven types and the `flattenUsageLog` helper above are re-exported from the package root. Two additional helpers — the runtime arrays `MESSAGE_ROLES` / `STOP_REASONS` and their derived literal-union aliases `MessageRole` / `StopReason` — are exported from `src/types/index.ts` but are **not** currently re-exported from the package entrypoint. They are documented at the bottom of this page for completeness; if you need them externally, import them via a deep path or open an issue requesting public re-export.
 
 ## `Message`
 
@@ -175,9 +179,9 @@ const call: ToolCall = {
 
 ## `Usage`
 
-Cumulative token and cost accounting for a single agent run. Defined at `src/types/Message.ts:215-275`. The shape mirrors OpenRouter's `ResponseUsage` (see `docs/openrouter/llm.md` §Usage).
+Cumulative token and cost accounting for a single agent run. Defined at `src/types/Message.ts:215-275`. The shape mirrors OpenRouter's `ResponseUsage` field on a chat-completion response.
 
-**Accumulation semantics.** Every LLM call performed during a run contributes to a single `Usage` record. Numeric fields (including `cost`, every `*_tokens` field, and every nested `*_details` field) are **summed across calls**. Optional fields are **omitted** (rather than zeroed) when no provider in the run reported them. The agent reports the union of every field any provider returned during the run; `is_byok` reflects the most recent call. The merging logic lives in `src/lib/` (internal) and is invoked on each completion before being surfaced as `Result.usage`.
+**Accumulation semantics.** Every LLM call performed during a run contributes to a single `Usage` record. Numeric fields (including `cost`, every `*_tokens` field, and every nested `*_details` field) are **summed across calls**. Optional fields are **omitted** (rather than zeroed) when no provider in the run reported them. The agent reports the union of every field any provider returned during the run. **`is_byok` is intentionally excluded from the run-level aggregate** — it is a per-call boolean and any aggregation rule across mixed runs is lossy; consult `Result.usageLog[i].usage.is_byok` for the per-call value. The merging logic lives in `src/lib/` (internal) and is invoked on each completion before being surfaced as `Result.usage`.
 
 | Field                                              | Type      | Required | Default | Description                                                                                          |
 | -------------------------------------------------- | --------- | -------- | ------- | ---------------------------------------------------------------------------------------------------- |
@@ -196,11 +200,11 @@ Cumulative token and cost accounting for a single agent run. Defined at `src/typ
 | `completion_tokens_details.image_tokens`           | `number`  | optional | —       | Image-modality output tokens (provider-dependent).                                                   |
 | `server_tool_use`                                  | `object`  | optional | —       | OpenRouter server-side tool usage — counts tools invoked by OpenRouter's own infrastructure (not host-executed tools). |
 | `server_tool_use.web_search_requests`              | `number`  | optional | —       | Number of OpenRouter-hosted web search requests issued.                                              |
-| `cost_details`                                     | `object`  | optional | —       | Cost broken down by upstream pricing component. Provider-dependent. See `docs/openrouter/llm.md` §Usage. |
+| `cost_details`                                     | `object`  | optional | —       | Cost broken down by upstream pricing component. Provider-dependent.                                  |
 | `cost_details.upstream_inference_cost`             | `number`  | optional | —       | Total upstream cost in USD before OpenRouter markup.                                                 |
 | `cost_details.upstream_inference_prompt_cost`      | `number`  | optional | —       | Upstream prompt-token cost in USD.                                                                   |
 | `cost_details.upstream_inference_completions_cost` | `number`  | optional | —       | Upstream completion-token cost in USD.                                                               |
-| `is_byok`                                          | `boolean` | optional | —       | Whether the call was billed to the user's BYOK provider key. Reflects the **most recent call** in the run. |
+| `is_byok`                                          | `boolean` | optional | —       | Whether the call was billed to the user's BYOK provider key. **Not aggregated into `Result.usage`** — only present on per-entry `usageLog[i].usage`. |
 
 ```ts
 const usage: Usage = {
@@ -215,14 +219,16 @@ const usage: Usage = {
 
 ## `Result`
 
-The result of an agent run. Defined at `src/types/Message.ts:289-322`. Returned by `Agent.run()` and surfaced as the payload of the `agent:end` event. Captures the final assistant text, the full message transcript produced during the run, the reason the loop terminated, cumulative `Usage`, every OpenRouter generation id observed, and — only for `stopReason === "error"` — a structured error.
+The result of an agent run. Defined at `src/types/Message.ts:291-339`. Returned by `Agent.run()` and surfaced as the payload of the `agent:end` event. Captures the run's id, the final assistant text, the full message transcript produced during the run, the reason the loop terminated, cumulative `Usage`, the per-call `usageLog` breakdown, every OpenRouter generation id observed, and — only for `stopReason === "error"` — a structured error.
 
 | Field             | Type                                                                                  | Required | Default | Description                                                                                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------- | -------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runId`           | `string`                                                                              | required | —       | Unique id of this run. Stable for the lifetime of one `Agent.run()` invocation. Matches the `runId` on every event emitted by the run.                   |
 | `content`         | `string`                                                                              | required | `""`    | Final assistant text message after all tool calls in the run. Empty string if the run produced no assistant text (e.g. errored before the first turn, or the last turn was all tool calls). |
 | `messages`        | `Message[]`                                                                           | required | —       | Full conversation including all tool messages from this run. System messages are not stored here.                                                        |
 | `stopReason`      | `"done" \| "max_turns" \| "aborted" \| "length" \| "content_filter" \| "error"`       | required | —       | Why the loop stopped. See the **stopReason values** section below for full semantics.                                                                    |
-| `usage`           | `Usage`                                                                               | required | —       | Accumulated usage across every LLM call in the run. See `Usage` above.                                                                                   |
+| `usage`           | `Usage`                                                                               | required | —       | Accumulated usage across every LLM call in the run (including `deps.complete`, `deps.embed`, `deps.transcribe`, and rolled-up subagent usage). `is_byok` is **not** aggregated. See `Usage` above. |
+| `usageLog`        | `UsageLogEntry[]`                                                                     | required | —       | Per-call breakdown of `usage`. One entry per LLM call this run made directly; subagent invocations contribute a single rolled-up `"agent"` entry. See **`UsageLogEntry`** below. |
 | `generationIds`   | `string[]`                                                                            | required | —       | Every `response.id` OpenRouter returned during the run, in the order observed.                                                                           |
 | `error`           | `{ code?: number; message: string; metadata?: Record<string, unknown> }`              | optional | —       | Populated **iff** `stopReason === "error"`. See sub-fields below.                                                                                        |
 | `error.code`      | `number`                                                                              | optional | —       | HTTP-style status or provider error code.                                                                                                                |
@@ -231,6 +237,7 @@ The result of an agent run. Defined at `src/types/Message.ts:289-322`. Returned 
 
 ```ts
 const result: Result = {
+  runId: "run_a1b2c3",
   content: "The answer is 42.",
   messages: [
     { role: "user", content: "What is the answer?" },
@@ -238,9 +245,71 @@ const result: Result = {
   ],
   stopReason: "done",
   usage: { prompt_tokens: 12, completion_tokens: 7, total_tokens: 19 },
+  usageLog: [
+    {
+      source: "turn",
+      runId: "run_a1b2c3",
+      generationId: "gen-abc123",
+      usage: { prompt_tokens: 12, completion_tokens: 7, total_tokens: 19 },
+    },
+  ],
   generationIds: ["gen-abc123"],
 };
 ```
+
+## `UsageLogSource`
+
+Origin tag for a `UsageLogEntry`. Discriminates which kind of LLM call the entry accounts for. Defined at `src/types/Message.ts:358`.
+
+```ts
+type UsageLogSource = "turn" | "tool" | "agent" | "embed" | "transcribe";
+```
+
+| Value          | Source of the call                                                                                                          |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `"turn"`       | A streaming turn from the run that owns this log (the agent loop's own LLM call).                                           |
+| `"tool"`       | An LLM call a tool made via `deps.complete` from inside `Tool.execute`. Represents a call **made by** a tool, not the tool invocation itself. |
+| `"agent"`      | A nested `Agent` invoked as a tool. Carries the subagent's full `Result.usage` as a single summary entry; the subagent's own per-call breakdown lives on its inner `Result` (reachable via the `INNER_RESULT_KEY` Symbol). |
+| `"embed"`      | An embeddings call made via `deps.embed`.                                                                                   |
+| `"transcribe"` | A transcription call made via `deps.transcribe`.                                                                            |
+
+## `UsageLogEntry`
+
+A single LLM call's contribution to a run's accumulated usage. Defined at `src/types/Message.ts:383-402`. One entry is appended for every chat, embedding, or transcription call the run made, regardless of where in the call tree it originated. Entries are in chronological order of completion.
+
+The run-level invariant: `result.usage ≈ Σ result.usageLog[i].usage`, field-by-field for fields defined on at least one entry. `is_byok` is excluded from the aggregate.
+
+| Field                 | Type             | Required | Description                                                                                                                        |
+| --------------------- | ---------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `source`              | `UsageLogSource` | required | Discriminator. One of `"turn" \| "tool" \| "agent" \| "embed" \| "transcribe"`.                                                    |
+| `runId`               | `string`         | required | Run id of the run that produced this entry. For `"agent"` entries this is the **subagent's** runId.                                |
+| `parentRunId`         | `string`         | optional | Outer run id when this entry was produced inside a subagent (or, for `"agent"` entries, the parent's runId). Undefined for top-level activity. |
+| `usage`               | `Usage`          | required | Per-call usage (un-aggregated, with `is_byok` preserved when reported). For `"agent"` entries this is the subagent's aggregated `Result.usage`. |
+| `generationId`        | `string`         | optional | OpenRouter generation id, when the provider returned one. Present on `"turn"`; opportunistic on `"tool"` and `"embed"`.            |
+| `toolUseId`           | `string`         | optional | Tool-call id that initiated the LLM call. Present on `"tool"`, `"agent"`, `"embed"`, `"transcribe"`. Absent on `"turn"`.           |
+| `toolName`            | `string`         | optional | Tool name. Present whenever `toolUseId` is.                                                                                        |
+| `embeddingModel`      | `string`         | optional | Embedding model slug. Present only on `"embed"` entries.                                                                           |
+| `transcriptionModel`  | `string`         | optional | Transcription model slug. Present only on `"transcribe"` entries.                                                                  |
+
+Subagent invocations attach the subagent's full inner `Result` to their `"agent"` entry via a non-enumerable Symbol key — `INNER_RESULT_KEY` (re-exported from the package root). Use `flattenUsageLog` (below) to recurse into subagent inner logs and produce a flat list of leaf entries (`"turn"`, `"tool"`, `"embed"`, `"transcribe"`).
+
+## `flattenUsageLog`
+
+Helper for working with `Result.usageLog`. Re-exported from the package root.
+
+```ts
+import { flattenUsageLog, INNER_RESULT_KEY } from "@sftinc/openrouter-agent";
+
+const flat = flattenUsageLog(result.usageLog);
+// flat: only "turn" | "tool" | "embed" | "transcribe" entries — every "agent"
+// summary is replaced by its subagent's expanded entries (recursively).
+```
+
+| Parameter   | Type                  | Required | Description                                            |
+| ----------- | --------------------- | -------- | ------------------------------------------------------ |
+| `usageLog`  | `UsageLogEntry[]`     | required | The `Result.usageLog` array (or any inner-result log). |
+
+**Returns:** a new `UsageLogEntry[]` containing only leaf entries. Subagent `"agent"` summaries are removed and replaced by the entries from their inner `Result.usageLog` (reached via the `INNER_RESULT_KEY` Symbol). Order is preserved.
 
 ## `stopReason` values
 

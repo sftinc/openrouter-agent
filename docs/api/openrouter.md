@@ -447,16 +447,17 @@ class OpenRouterError extends Error {
 }
 ```
 
-Source: `src/openrouter/client.ts:55-77`. The `retryAfterMs` field is parsed from the `Retry-After` response header (HTTP-date or seconds form). Used by the retry helper as a lower bound on the next backoff delay.
+Source: `src/openrouter/errors.ts:111-148`. The `retryAfterMs` field is parsed from the `Retry-After` response header (HTTP-date or seconds form). Used by the retry helper as a lower bound on the next backoff delay.
 
 ### Constructor parameters
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `params.code` | `number` | yes | — | HTTP status code that triggered the error. |
-| `params.message` | `string` | yes | — | Human-readable message; becomes `Error.message`. The client prefers `body.error.message` from the response when available, falling back to `"HTTP {status}"` (`src/openrouter/client.ts:254-256`). |
+| `params.message` | `string` | yes | — | Human-readable message; becomes `Error.message`. The client prefers `body.error.message` from the response when available, falling back to `"HTTP {status}"` (extracted in `src/openrouter/transport.ts`). |
 | `params.body` | `unknown` | no | `undefined` | Parsed JSON body of the error response, or `undefined` if the body was not JSON. |
 | `params.metadata` | `Record<string, unknown>` | no | `undefined` | Provider-specific extra detail, extracted from `body.error.metadata`. |
+| `params.retryAfterMs` | `number` | no | `undefined` | Parsed `Retry-After` response header in milliseconds. Used as a lower bound for retry backoff. |
 
 ### Common codes
 
@@ -706,6 +707,8 @@ Full non-streaming response from `/chat/completions`. Returned by `client.chat.c
 | `object` | `"chat.completion"` | yes | — | Object discriminator. |
 | `system_fingerprint` | `string` | no | — | Provider fingerprint (OpenAI-style). Absent on most non-OpenAI models. |
 | `usage` | `Usage` | no | — | Token usage and (optionally) cost. Populated when the provider reports it. |
+| `provider` | `string` | no | — | Upstream provider that served the response (e.g. `"OpenAI"`, `"Anthropic"`). Forwarded verbatim by OpenRouter. |
+| `error` | `ErrorResponse` | no | — | Top-level error reported during the response (e.g. server-tool failure mid-stream). Distinct from per-choice `NonStreamingChoice.error` — surfaces errors not tied to a specific choice. Latest error wins when multiple chunks report one. |
 
 ### `NonStreamingChoice`
 
@@ -959,9 +962,10 @@ A single completion choice within an SSE chunk. Source: `src/openrouter/types.ts
 | `delta.content` | `string \| null` | yes | — | Text fragment to append, or `null` for non-text deltas. |
 | `delta.role` | `string` | no | — | Role declaration — typically only present on the very first delta. |
 | `delta.tool_calls` | `ToolCallDelta[]` | no | — | Tool-call fragments. |
+| `delta.annotations` | `Annotation[]` | no | — | Annotations emitted incrementally on this delta — most commonly URL citations from server tools like `openrouter:web_search`. Each delta may carry zero or more; consumers should concatenate across all deltas of the same choice. |
 | `error` | `ErrorResponse` | no | — | Populated when this choice errored mid-stream. |
 
-Note: OpenRouter SSE choices in the wire payload also carry an `index` field which the type does not declare; the internal stream-assembler accounts for this via a position fallback (`src/openrouter/client.ts:443-450`).
+Note: OpenRouter SSE choices in the wire payload also carry an `index` field which the type does not declare; the internal stream-assembler accounts for this via a position fallback in `src/openrouter/chat.ts`.
 
 ---
 
@@ -977,6 +981,9 @@ A single SSE chunk parsed from `/chat/completions` when `stream: true`. The fina
 | `model` | `string` | yes | — | The model actually serving the response. |
 | `choices` | `StreamingChoice[]` | yes | — | Streaming choices in this chunk. Empty on the final usage-only chunk. |
 | `usage` | `Usage` | no | — | Token usage. Typically present only on the final chunk. |
+| `provider` | `string` | no | — | Upstream provider that served this chunk (e.g. `"OpenAI"`, `"Anthropic"`). |
+| `system_fingerprint` | `string` | no | — | Provider fingerprint (OpenAI-style). Absent on most non-OpenAI models. |
+| `error` | `ErrorResponse` | no | — | Top-level error reported on this chunk (e.g. server-tool failure mid-stream). Distinct from `StreamingChoice.error` — arrives on chunks that have an empty `choices` array. |
 
 ---
 
@@ -1159,6 +1166,25 @@ class IdleTimeoutError extends Error {
 
 `defaultIsRetryable` returns `true` for this error.
 
+### `RetryableProviderError`
+
+Synthetic error class the agent loop throws to mark a mid-stream provider error (`chunk.error` or `finish_reason: "error"`) as retryable. Only the loop emits this; outside callers should treat it the same as any provider-side error. Source: `src/openrouter/retry.ts:363-382`. Re-exported from the package root.
+
+```ts
+class RetryableProviderError extends Error {
+  readonly name: "RetryableProviderError";
+  readonly code?: number;
+  readonly metadata?: Record<string, unknown>;
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `code` | `number \| undefined` | Provider-supplied error code (typically HTTP-style). |
+| `metadata` | `Record<string, unknown> \| undefined` | Provider metadata, when available. |
+
+`defaultIsRetryable` returns `true` for this error.
+
 ### `RequestOptions`
 
 Options accepted as the second argument to every namespace method (`chat.complete`, `chat.completeStream`, `embeddings.create`, `audio.transcriptions.create`). Each method also accepts a bare `AbortSignal` for back-compat.
@@ -1177,7 +1203,6 @@ export interface RequestOptions {
 | `retryBudget` | `RetryBudget` | no | newly allocated | Shared budget so the loop layer's stream-level retries do not compound with connection-level retries. |
 | `retryConfig` | `RetryConfig` | no | inherits from client | Per-call override merged field-by-field on top of the client's resolved config. |
 
-`CompleteStreamOptions` is a deprecated alias for `RequestOptions` — kept for one minor cycle, removed at the next major.
 
 ### Example: per-Agent retry override
 

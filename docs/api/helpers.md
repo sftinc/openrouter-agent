@@ -66,10 +66,12 @@ function defaultDisplay(event: AgentEvent): EventDisplay;
 | `agent:end` (errored) | `` `Completed with errors in ${seconds}s` `` | — |
 | `message:delta` | `"Message delta"` | — |
 | `message` | `"Message"` | — |
+| `message:preamble` | `"Preamble"` | — |
 | `tool:start` | `` `Running ${event.toolName}` `` | — |
 | `tool:progress` | `` `Still running (${Math.round(event.elapsedMs / 1000)}s)` `` | — |
 | `tool:end` (success) | `` `Completed ${event.toolName} in ${seconds}s` `` (min 1s) | — |
 | `tool:end` (error) | `` `${event.toolName} failed after ${seconds}s` `` | — |
+| `retry` | `` `Retrying in ${seconds}s (attempt ${event.attempt + 1})` `` (min 1s) | — |
 | `error` | `"Error"` | `event.error.message` |
 
 **Errors** — none.
@@ -84,9 +86,10 @@ import { defaultDisplay } from "@sftinc/openrouter-agent";
 const { title } = defaultDisplay({
   type: "tool:start",
   runId: "r1",
+  toolUseId: "tu_c1",
   toolName: "calculator",
-  callId: "c1",
-  args: { expression: "1+1" },
+  input: { expression: "1+1" },
+  startedAt: Date.now(),
 });
 console.log(title); // "Running calculator"
 ```
@@ -193,11 +196,13 @@ Per-variant typed handlers consumed by `consumeAgentEvents`. All fields are opti
 | --- | --- | --- |
 | `onAgentStart` | `(e: Extract<AgentEvent, { type: "agent:start" }>) => void \| Promise<void>` | Called once at the start of a run. |
 | `onAgentEnd` | `(e: Extract<AgentEvent, { type: "agent:end" }>) => void \| Promise<void>` | Called once at the end of a run with the final `Result`. |
-| `onMessage` | `(e: Extract<AgentEvent, { type: "message" }>) => void \| Promise<void>` | Called once per assistant message (including tool-call messages). |
+| `onMessage` | `(e: Extract<AgentEvent, { type: "message" }>) => void \| Promise<void>` | Called once per run, on the turn whose assembled assistant message has no `tool_calls` (the run's final answer). Tool-call assistant messages fire `onMessagePreamble` instead. |
+| `onMessagePreamble` | `(e: Extract<AgentEvent, { type: "message:preamble" }>) => void \| Promise<void>` | Called once per turn whose assembled assistant message has `tool_calls`. Same payload shape as the terminal `onMessage` event. Followed by the matching `onToolStart` / `onToolEnd` pairs. |
 | `onMessageDelta` | `(e: Extract<AgentEvent, { type: "message:delta" }>) => void \| Promise<void>` | Called for each streamed text delta from the assistant. |
 | `onToolStart` | `(e: Extract<AgentEvent, { type: "tool:start" }>) => void \| Promise<void>` | Called once when a tool invocation begins. |
 | `onToolProgress` | `(e: Extract<AgentEvent, { type: "tool:progress" }>) => void \| Promise<void>` | Called when a tool emits a manual progress signal via `deps.emit`. |
 | `onToolEnd` | `(e: Extract<AgentEvent, { type: "tool:end" }>) => void \| Promise<void>` | Called once when a tool invocation ends (success or failure). |
+| `onRetry` | `(e: Extract<AgentEvent, { type: "retry" }>) => void \| Promise<void>` | Called each time the loop retries a failed LLM call. Fires before the next attempt begins, after the computed backoff delay. Only fires before the first `message:delta` for a turn. |
 | `onError` | `(e: Extract<AgentEvent, { type: "error" }>) => void \| Promise<void>` | Called when a fatal run error occurs. Always precedes `agent:end` with `stopReason: "error"`. Emitted at most once per run. |
 | `onAny` | `(e: AgentEvent) => void \| Promise<void>` | Catch-all that runs **after** any matching typed handler, useful for logging/telemetry. |
 

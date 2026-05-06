@@ -13,6 +13,8 @@
  *   2. Defaults configured on the namespace (constructor arg).
  *   3. Fields supplied on the per-call request.
  *   4. `stream` is forced (`true`) and never overridable.
+ *
+ * See https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request.
  */
 
 import { Transport, type RequestOptions } from "./transport.js";

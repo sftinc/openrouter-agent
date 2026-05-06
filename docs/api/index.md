@@ -14,11 +14,11 @@ Do not import from internal subpaths (`@sftinc/openrouter-agent/src/...`); they 
 
 | Page | Folder | Surface |
 | --- | --- | --- |
-| [Agent Layer](./agent.md) | `src/agent/` | `Agent`, `AgentConfig`, `AgentRunOptions`, `AgentRun`, every `AgentEvent` variant (including `retry`), `AgentDisplayHooks`, `EventDisplay`, `EventEmit`, loop semantics, retry behavior |
+| [Agent Layer](./agent.md) | `src/agent/` | `Agent`, `AgentConfig`, `AgentRunOptions`, `AgentRun`, `INNER_RESULT_KEY`, every `AgentEvent` variant (including `message:preamble` and `retry`), `AgentDisplayHooks`, `EventDisplay`, `EventEmit`, loop semantics, retry behavior |
 | [Tool Layer](./tool.md) | `src/tool/` | `Tool`, `ToolConfig`, `ToolDeps`, `ToolResult`, `ToolDisplayHooks`, result coercion, Zod → JSON Schema conversion |
-| [OpenRouter Client](./openrouter.md) | `src/openrouter/` | `OpenRouterClient` (`chat.complete`, `chat.completeStream`, `embeddings.create`, `audio.transcriptions.create`), `setOpenRouterClient`, `getOpenRouterClient`, `OpenRouterError`, `LLMConfig`, `OpenRouterClientOptions`, `OpenRouterTool`, `CompletionsRequest`, `CompletionsResponse`, `EmbedRequest`, `EmbedResponse`, `EmbeddingsDefaults`, `TranscriptionRequest`, `TranscriptionResponse`, `TranscriptionsDefaults`, `TranscriptionProviderOptions`, `RequestOptions`, `RetryConfig`, `defaultIsRetryable`, `StreamTruncatedError`, `IdleTimeoutError` |
+| [OpenRouter Client](./openrouter.md) | `src/openrouter/` | `OpenRouterClient` (`chat.complete`, `chat.completeStream`, `embeddings.create`, `audio.transcriptions.create`), `setOpenRouterClient`, `getOpenRouterClient`, `OpenRouterError`, `LLMConfig`, `OpenRouterClientOptions`, `OpenRouterTool`, `CompletionsRequest`, `CompletionsResponse`, `EmbedRequest`, `EmbedResponse`, `EmbeddingsDefaults`, `TranscriptionRequest`, `TranscriptionResponse`, `TranscriptionsDefaults`, `TranscriptionProviderOptions`, `RequestOptions`, `RetryConfig`, `defaultIsRetryable`, `StreamTruncatedError`, `IdleTimeoutError`, `RetryableProviderError` |
 | [Session Layer](./session.md) | `src/session/` | `SessionStore` interface, `InMemorySessionStore`, `SessionBusyError`, contract for custom (Redis / Postgres) implementations |
-| [Conversation Types](./types.md) | `src/types/` | `Message`, `ContentPart`, `ToolCall`, `Usage`, `Result`, all `stopReason` values |
+| [Conversation Types](./types.md) | `src/types/` | `Message`, `ContentPart`, `ToolCall`, `Usage`, `Result` (with `runId` and `usageLog`), `UsageLogSource`, `UsageLogEntry`, `flattenUsageLog`, all `stopReason` values |
 | [Event Helpers](./helpers.md) | `src/helpers/` | `defaultDisplay`, `displayOf`, `consumeAgentEvents`, `streamText`, NDJSON codec (`serializeEvent`, `serializeEventsAsNDJSON`, `readEventStream`), HTTP adapters (`pipeEventsToNodeResponse`, `eventsToWebResponse`), high-level handlers (`handleAgentRun`, `handleAgentRunWebResponse`) |
 
 ## Reading order
@@ -43,5 +43,5 @@ If you are new to the package, read in this order:
 ## See also
 
 - [Root README](../../README.md) — install, quickstart, architecture overview, environment variables.
-- [`docs/openrouter/`](../openrouter/) — upstream OpenRouter API reference (treated as the source of truth for wire shapes).
+- [OpenRouter docs](https://openrouter.ai/docs) — upstream wire-shape and provider-routing reference.
 - [`examples/`](../../examples/) — runnable scripts: `quickstart/`, `sub-agent/`, `direct-client/` (a one-shot `chat.complete` call), and `full-demo/` (streaming HTTP demo).

@@ -40,8 +40,28 @@ Within the package, the folder index re-exports everything (`src/agent/index.ts:
 | `AgentDisplayHooks` | interface | `src/agent/events.ts:46` |
 | `EventDisplay` | interface | `src/agent/events.ts:20` |
 | `EventEmit` | type alias | `src/agent/events.ts:302` |
+| `INNER_RESULT_KEY` | unique symbol | `src/agent/Agent.ts` |
 
 The `defaultDisplay` value-level helper is co-located in `src/agent/events.ts:262` but is re-exported from `@sftinc/openrouter-agent` via `src/helpers/`, not from this folder's index.
+
+### `INNER_RESULT_KEY`
+
+A non-enumerable Symbol the loop attaches to two places:
+1. The outer `tool:end.metadata` (and corresponding tool-message metadata) of every subagent invocation — pointing to the subagent's full inner `Result`.
+2. Each `"agent"` `UsageLogEntry` on the parent's `Result.usageLog` — also pointing to the subagent's inner `Result`.
+
+Use it to drill from a parent's tool-end or usage-log entry into the subagent's own activity. Pair with [`flattenUsageLog`](./types.md#flattenusagelog) for a flat per-call breakdown across the whole call tree.
+
+```ts
+import { INNER_RESULT_KEY } from "@sftinc/openrouter-agent";
+
+for (const entry of result.usageLog) {
+  if (entry.source === "agent") {
+    const inner = (entry as any)[INNER_RESULT_KEY];
+    console.log(inner.runId, inner.usageLog.length);
+  }
+}
+```
 
 ---
 
@@ -289,7 +309,7 @@ Source: `src/agent/events.ts:122-137`. Fires once, last, with the final `Result`
 | --- | --- | --- |
 | `type` | `"agent:end"` | Discriminator. |
 | `runId` | `string` | Matches the prior `agent:start.runId`. |
-| `result` | `Result` | Final result: `text`, `messages`, `stopReason`, `usage`, `generationIds`, `error?`. |
+| `result` | `Result` | Final result: `runId`, `content`, `messages`, `stopReason`, `usage`, `usageLog`, `generationIds`, `error?`. |
 | `display` | `EventDisplay \| undefined` | Resolved display payload from the agent's `success` / `error` / `end` hook (see hook routing below). |
 | `startedAt` | `number` | Wall-clock epoch ms when the run started (matches the prior `agent:start.startedAt`). |
 | `endedAt` | `number` | Wall-clock epoch ms when the event was emitted. |
@@ -374,7 +394,7 @@ Source: `src/agent/events.ts:208-229`. Discriminate success vs failure with `"er
 
 ### `tool:end` (error)
 
-Source: `src/agent/events.ts:230-251`. Distinguished from the success variant by the presence of `error` (and the absence of `output`).
+Source: `src/agent/events.ts:246-267`. Distinguished from the success variant by the presence of `error` (and the absence of `content`).
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -497,7 +517,7 @@ Source: `src/agent/loop.ts:579-805`. `runLoop` is the lower-level driver behind 
    - Otherwise dispatch each tool call sequentially via `executeToolCall`, append `role: "tool"` messages, continue.
 5. **Loop fall-through** — if the loop exited without setting `stopReason`, set `"max_turns"` (`src/agent/loop.ts:772`).
 6. **Transactional persistence** — only on a clean terminal stop reason (`done`, `max_turns`, `length`, `content_filter`) is the conversation written back to the session store. On `error` or `aborted` the session is left exactly as it was, so the client can safely retry with the same input (`src/agent/loop.ts:777-784`).
-7. **`agent:end`** — emitted last with the final `Result`, including `text` (last assistant text), `messages`, `stopReason`, accumulated `usage`, every observed `generationIds`, and `error?` (only when `stopReason === "error"`).
+7. **`agent:end`** — emitted last with the final `Result`, including the run's `runId`, `content` (last assistant text), full `messages` produced this run, `stopReason`, accumulated `usage`, the per-call `usageLog` breakdown (with subagent invocations rolled up as single `"agent"` entries; use `flattenUsageLog` to recurse), every observed `generationIds`, and `error?` (only when `stopReason === "error"`).
 
 ### `Result.messages`
 
