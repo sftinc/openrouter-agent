@@ -22,7 +22,7 @@ if (!apiKey) {
 const query = process.argv[2] ?? 'Current stock price for MSFT'
 
 const body = {
-	model: 'anthropic/claude-haiku-4.5',
+	model: 'openai/gpt-5.4-mini',
 	max_tokens: 2000,
 	temperature: 0.3,
 	stream: false,
@@ -48,12 +48,7 @@ const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
 	body: JSON.stringify(body),
 })
 
-const text = await response.text()
 console.log('--- HTTP status ---')
 console.log(response.status, response.statusText)
 console.log('--- response body ---')
-try {
-	console.dir(JSON.parse(text), { depth: null })
-} catch {
-	console.log(text)
-}
+console.dir(await response.json(), { depth: null })
