@@ -24,7 +24,7 @@ const client = new OpenRouterClient({
 	referer: 'https://github.com/sftinc/openrouter-agent',
 	title: 'openrouter-agent websearch example',
 	chat: {
-		model: 'anthropic/claude-haiku-4.5',
+		model: 'openai/gpt-5.4-mini',
 		max_tokens: 2000,
 		temperature: 0.3,
 	},
@@ -47,5 +47,12 @@ const response = await client.chat.complete({
 	],
 })
 
+for (const choice of response.choices) {
+	if (Array.isArray(choice.message.annotations)) {
+		const filtered = choice.message.annotations.filter((a) => a.type !== 'url_citation')
+		if (filtered.length > 0) choice.message.annotations = filtered
+		else delete choice.message.annotations
+	}
+}
 console.log('\n--- response ---')
 console.dir(response, { depth: null })
