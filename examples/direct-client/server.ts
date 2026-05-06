@@ -42,16 +42,17 @@ const response = await client.chat.complete({
 	tools: [
 		{
 			type: 'openrouter:web_search',
-			parameters: { engine: 'exa', max_results: 5 },
+			parameters: { engine: 'exa', max_results: 2 },
 		} as never,
 	],
 })
 
 for (const choice of response.choices) {
-	if (Array.isArray(choice.message.annotations)) {
-		const filtered = choice.message.annotations.filter((a) => a.type !== 'url_citation')
-		if (filtered.length > 0) choice.message.annotations = filtered
-		else delete choice.message.annotations
+	for (const annotation of choice.message.annotations ?? []) {
+		const content = annotation.url_citation.content
+		if (annotation.type === 'url_citation' && content && content.length > 100) {
+			annotation.url_citation.content = `${content.slice(0, 100)}…`
+		}
 	}
 }
 console.log('\n--- response ---')
