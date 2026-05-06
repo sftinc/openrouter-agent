@@ -106,6 +106,25 @@ describe("ChatNamespace.complete (drainer)", () => {
     expect(body.temperature).toBe(0.9);
   });
 
+  test("preserves delta.annotations across chunks (e.g. openrouter:web_search citations)", async () => {
+    const chunks: CompletionChunk[] = [
+      { id: "g1", object: "chat.completion.chunk", created: 1, model: "x", choices: [{ index: 0, delta: { role: "assistant", content: "", annotations: [{ type: "url_citation", url_citation: { url: "https://a.example", title: "A", start_index: 0, end_index: 0 } }] }, finish_reason: null, native_finish_reason: null }] } as any,
+      { id: "g1", object: "chat.completion.chunk", created: 1, model: "x", choices: [{ index: 0, delta: { content: "", annotations: [{ type: "url_citation", url_citation: { url: "https://b.example", title: "B", start_index: 0, end_index: 0 } }] }, finish_reason: null, native_finish_reason: null }] } as any,
+      { id: "g1", object: "chat.completion.chunk", created: 1, model: "x", choices: [{ index: 0, delta: {}, finish_reason: "stop", native_finish_reason: "stop" }] } as any,
+    ];
+    (globalThis.fetch as any).mockResolvedValueOnce(new Response(sseStream(chunks), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+
+    const transport = new Transport({ apiKey: "sk-test" });
+    const chat = new ChatNamespace(transport);
+    const res = await chat.complete({ messages: [{ role: "user", content: "hi" }] });
+
+    const message = res.choices[0]!.message;
+    expect(message.content).toBeNull();
+    expect(message.annotations).toHaveLength(2);
+    expect(message.annotations?.[0]?.url_citation.url).toBe("https://a.example");
+    expect(message.annotations?.[1]?.url_citation.url).toBe("https://b.example");
+  });
+
   test("complete forces stream:true on the wire", async () => {
     const chunks: CompletionChunk[] = [
       { id: "g1", object: "chat.completion.chunk", created: 1, model: "x", choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: "stop", native_finish_reason: "stop" }] } as any,

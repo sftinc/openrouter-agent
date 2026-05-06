@@ -413,6 +413,13 @@ export interface StreamingChoice {
 		role?: string
 		/** Tool-call fragments (see {@link ToolCallDelta}). */
 		tool_calls?: ToolCallDelta[]
+		/**
+		 * Annotations emitted incrementally on this delta — most commonly URL
+		 * citations from server tools like `openrouter:web_search`. Each
+		 * delta may carry zero or more annotations; consumers should
+		 * concatenate annotations across all deltas of the same choice.
+		 */
+		annotations?: Annotation[]
 	}
 	/** Populated when this choice errored mid-stream. */
 	error?: ErrorResponse

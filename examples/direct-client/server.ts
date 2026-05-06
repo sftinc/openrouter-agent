@@ -39,11 +39,13 @@ const response = await client.chat.complete({
 		},
 		{ role: 'user', content: query },
 	],
-	tools: [{ type: 'openrouter:web_search', engine: 'exa', max_results: 5 } as never],
+	tools: [
+		{
+			type: 'openrouter:web_search',
+			parameters: { engine: 'exa', max_results: 5 },
+		} as never,
+	],
 })
 
-// console.log('--- full response ---')
-// console.dir(response, { depth: null })
-
-console.log('\n--- choices[0].message ---')
-console.log(response.choices[0]?.message)
+console.log('\n--- response ---')
+console.dir(response, { depth: null })

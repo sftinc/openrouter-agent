@@ -19,6 +19,7 @@ import { Transport, type RequestOptions } from "./transport.js";
 import { parseSseStream } from "./sse.js";
 import { StreamTruncatedError } from "./errors.js";
 import type {
+	Annotation,
 	CompletionChunk,
 	CompletionsRequest,
 	CompletionsResponse,
@@ -197,6 +198,7 @@ function assembleCompletionsResponse(chunks: CompletionChunk[]): CompletionsResp
 		content: string;
 		role: string;
 		toolCalls: Map<number, ToolAcc>;
+		annotations: Annotation[];
 		finish_reason: string | null;
 		native_finish_reason: string | null;
 	};
@@ -217,11 +219,13 @@ function assembleCompletionsResponse(chunks: CompletionChunk[]): CompletionsResp
 			const idx = (sc as unknown as { index?: number }).index ?? i;
 			let acc = choices.get(idx);
 			if (!acc) {
-				acc = { content: "", role: "assistant", toolCalls: new Map(), finish_reason: null, native_finish_reason: null };
+				acc = { content: "", role: "assistant", toolCalls: new Map(), annotations: [], finish_reason: null, native_finish_reason: null };
 				choices.set(idx, acc);
 			}
 			if (typeof sc.delta?.content === "string") acc.content += sc.delta.content;
 			if (sc.delta?.role) acc.role = sc.delta.role;
+			const deltaAnnotations = (sc.delta as { annotations?: Annotation[] } | undefined)?.annotations;
+			if (Array.isArray(deltaAnnotations)) acc.annotations.push(...deltaAnnotations);
 			for (const td of sc.delta?.tool_calls ?? []) {
 				let tc = acc.toolCalls.get(td.index);
 				if (!tc) {
@@ -262,6 +266,7 @@ function assembleCompletionsResponse(chunks: CompletionChunk[]): CompletionsResp
 					role: acc.role,
 					content: acc.content.length > 0 ? acc.content : null,
 					...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+					...(acc.annotations.length > 0 ? { annotations: acc.annotations } : {}),
 				},
 			};
 		}),
