@@ -5,76 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0](https://github.com/sftinc/openrouter-agent/compare/v1.3.1...v1.4.0) (2026-05-06)
 
-### Breaking — `OpenRouterClient` namespaced surface
-
-The OpenRouter client surface is restructured into per-modality namespaces.
-The previous top-level `complete` / `completeStream` / `embed` methods and
-top-level constructor options (`model`, `embedModel`, `temperature`, …) are
-removed. The exported `DEFAULT_MODEL` constant is also removed; default
-models are now hardcoded inside each namespace.
-
-Despite the breaking surface change, this project stays on the 1.x line —
-the change ships as a `feat:` minor bump rather than a major bump (per
-`CLAUDE.md`).
-
-**Migration map:**
-
-| Old                                               | New                                                       |
-| ------------------------------------------------- | --------------------------------------------------------- |
-| `client.complete(req)`                            | `client.chat.complete(req)`                               |
-| `client.completeStream(req)`                      | `client.chat.completeStream(req)`                         |
-| `client.embed(req)`                               | `client.embeddings.create(req)`                           |
-| _(new)_                                           | `client.audio.transcriptions.create(req)`                 |
-| `new OpenRouterClient({ model, temperature })`    | `new OpenRouterClient({ chat: { model, temperature } })`  |
-| `new OpenRouterClient({ embedModel })`            | `new OpenRouterClient({ embeddings: { model } })`         |
-| _(new)_                                           | `new OpenRouterClient({ audio: { transcriptions: { … } } })` |
-| `import { DEFAULT_MODEL }`                        | _removed_ — defaults are hardcoded per namespace          |
-
-`ToolDeps` gains a required `transcribe(request)` method (mirroring the
-existing required `embed(request)`). `RunLoopConfig.openrouter` likewise
-gains a required `transcribe` function. `UsageLogSource` gains the
-`"transcribe"` discriminator and `UsageLogEntry` gains an optional
-`transcriptionModel` field. `UsageLogEntry.model` is renamed to
-`embeddingModel` for symmetry.
-
-**Where to review the changes:**
-
-- Spec — `docs/superpowers/specs/2026-05-05-openrouter-namespaced-clients-design.md`
-- Plan — `docs/superpowers/plans/2026-05-05-openrouter-namespaced-clients.md`
-- API reference — `docs/api/openrouter.md` (rewritten) and `docs/api/index.md`
-- Source — `src/openrouter/{client,chat,embeddings,transport}.ts`,
-  `src/openrouter/audio/{index,transcriptions,transcriptions.types}.ts`
 
 ### Added
 
-- `OpenRouterClient.audio.transcriptions.create` — wraps OpenRouter's
-  `/audio/transcriptions` endpoint with per-call defaults overridable from
-  the namespace constructor.
-- New types: `TranscriptionRequest`, `TranscriptionResponse`,
-  `TranscriptionsDefaults`, `TranscriptionProviderOptions`,
-  `EmbeddingsDefaults`.
-- `Transport` shared HTTP layer (auth + headers + retry + fetch) used by
-  every namespace.
+* **examples:** add stream-client example and simplify direct-client ([d36b408](https://github.com/sftinc/openrouter-agent/commit/d36b408aaa8e7a8defeebb77046afc18ff8a3f4d))
+* **examples:** migrate to namespaced OpenRouterClient surface ([23c3cd7](https://github.com/sftinc/openrouter-agent/commit/23c3cd7f6bd76f5684bb71d3107f2b73477514f9))
+* **openrouter:** add ChatNamespace with drainer-based complete ([cefaf55](https://github.com/sftinc/openrouter-agent/commit/cefaf5530dfb81ca62fdd4c4fbb1df926df90d1d))
+* **openrouter:** add EmbeddingsDefaults type ([e025f39](https://github.com/sftinc/openrouter-agent/commit/e025f397df4b7071b69049947de0d80d5153ed5f))
+* **openrouter:** add EmbeddingsNamespace ([f28289b](https://github.com/sftinc/openrouter-agent/commit/f28289b22d4bbef382dd9860e85d05e72efcd1ae))
+* **openrouter:** add transcription request/response types ([df55b3b](https://github.com/sftinc/openrouter-agent/commit/df55b3b63dc2c2608c51af65098f86a2a6d3d167))
+* **openrouter:** add TranscriptionsNamespace and audio holder ([cc7844c](https://github.com/sftinc/openrouter-agent/commit/cc7844c89e60cf7a97bf2f57297d2d7b334ade88))
+* **openrouter:** namespaced client surface (chat / embeddings / audio.transcriptions) ([da00aa1](https://github.com/sftinc/openrouter-agent/commit/da00aa1f38d972cffd5d0d77ebbacdf1959e44f7))
+
+
+### Fixed
+
+* **examples:** add referer alongside title to satisfy OpenRouter app attribution ([1680cc3](https://github.com/sftinc/openrouter-agent/commit/1680cc34fb11802f733060e76e7ff42537c088f7))
+* **openrouter:** pass through provider, system_fingerprint, and errors in chat.complete ([e50f806](https://github.com/sftinc/openrouter-agent/commit/e50f806beea946448cd10e81420755c912159eec))
+* **openrouter:** preserve delta.annotations in chat.complete drainer ([fc3a259](https://github.com/sftinc/openrouter-agent/commit/fc3a259407589ca48f48267352cb5d8cde82b3ac))
+* **openrouter:** warn when localhost referer lacks a title ([da14c42](https://github.com/sftinc/openrouter-agent/commit/da14c429a3e9962dc751482f9c59081df2883ad2))
+* **openrouter:** warn when title is set without referer ([8d32cb4](https://github.com/sftinc/openrouter-agent/commit/8d32cb43e3c7d3de55d4741527a6042e480303bc))
+
 
 ### Changed
 
-- `chat.complete` is now a drainer over `chat.completeStream`. There is one
-  HTTP path per endpoint; the previous `stream: false` branch is removed.
-  Public contract is unchanged — callers still get one resolved
-  `CompletionsResponse`.
-
-### Removed
-
-- Top-level `OpenRouterClient.complete` / `completeStream` / `embed`
-  methods. Use `client.chat.*` / `client.embeddings.*` instead.
-- Top-level constructor options on `OpenRouterClient`: `model`,
-  `embedModel`, `temperature`, `top_p`, etc. Nest them under `chat` /
-  `embeddings` / `audio.transcriptions`.
-- `DEFAULT_MODEL` export. Per-namespace fallbacks: chat
-  `"openai/gpt-5.4"`, embeddings `"openai/text-embedding-3-small"`,
-  transcriptions `"openai/gpt-4o-mini-transcribe"`.
+* **examples:** rename websearch to direct-client/ ([fa8d362](https://github.com/sftinc/openrouter-agent/commit/fa8d362a40e499f67941079197533c5f0532f5b5))
+* **openrouter:** extract Transport for shared auth/retry plumbing ([a103c4f](https://github.com/sftinc/openrouter-agent/commit/a103c4fac6f8caf5eac10598dd92f5c453cb021d))
+* **openrouter:** move OpenRouterError to errors.ts ([019130a](https://github.com/sftinc/openrouter-agent/commit/019130a29519ad6f8415cbab798f7015bf11174b))
 
 ## [1.3.1](https://github.com/sftinc/openrouter-agent/compare/v1.3.0...v1.3.1) (2026-05-03)
 
